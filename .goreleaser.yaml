@@ -56,16 +56,16 @@ release:
   prerelease: auto
   mode: replace
 
-brews:
-  - name: frankendeploy
-    repository:
-      owner: yoanbernabeu
-      name: homebrew-tap
-    directory: Formula
-    homepage: https://github.com/yoanbernabeu/frankendeploy
-    description: CLI to deploy Symfony applications with FrankenPHP
-    license: MIT
-    install: |
-      bin.install "frankendeploy"
-    test: |
-      system "#{bin}/frankendeploy", "--version"
+# brews:
+#   - name: frankendeploy
+#     repository:
+#       owner: yoanbernabeu
+#       name: homebrew-tap
+#     directory: Formula
+#     homepage: https://github.com/yoanbernabeu/frankendeploy
+#     description: CLI to deploy Symfony applications with FrankenPHP
+#     license: MIT
+#     install: |
+#       bin.install "frankendeploy"
+#     test: |
+#       system "#{bin}/frankendeploy", "--version"
