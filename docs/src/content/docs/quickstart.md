@@ -124,6 +124,7 @@ frankendeploy rollback production
 ```
 
 ### Update Environment Variables (Zero Downtime)
+Update an environment variable for your application and apply it immediately:
 ```bash
 frankendeploy env set production NEW_VAR=value --reload
 ```
