@@ -1,0 +1,45 @@
+# FrankenDeploy - Docker Compose for Production
+# Generated for {{ .Name }}
+# Note: Caddy front proxy handles SSL/domains (see server:setup)
+
+services:
+  app:
+    image: {{ .ImageName }}:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: frankenphp_prod
+    restart: unless-stopped
+    # SECURITY: Run as non-root user
+    user: "1000:1000"
+    # No public ports - Caddy front proxy handles external traffic
+    # SECURITY: Use non-privileged port 8080 for non-root execution
+    expose:
+      - "8080"
+    environment:
+      SERVER_NAME: ":8080"
+      APP_ENV: prod
+      APP_DEBUG: "0"
+{{- if .Env.Prod }}
+{{- range $key, $value := .Env.Prod }}
+      {{ $key }}: "{{ $value }}"
+{{- end }}
+{{- end }}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2019/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "app.name={{ .Name }}"
+      - "app.version=${TAG:-latest}"
+{{- if .Deploy.Domain }}
+      - "app.domain={{ .Deploy.Domain }}"
+{{- end }}
+    networks:
+      - frankendeploy
+
+networks:
+  frankendeploy:
+    external: true

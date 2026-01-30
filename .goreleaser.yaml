@@ -1,0 +1,71 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: frankendeploy
+    main: ./cmd/frankendeploy
+    binary: frankendeploy
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X github.com/yoanbernabeu/frankendeploy/internal/cmd.Version={{.Version}}
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "Merge pull request"
+      - "Merge branch"
+
+release:
+  github:
+    owner: yoanbernabeu
+    name: frankendeploy
+  draft: false
+  prerelease: auto
+  mode: replace
+
+brews:
+  - name: frankendeploy
+    repository:
+      owner: yoanbernabeu
+      name: homebrew-tap
+    directory: Formula
+    homepage: https://github.com/yoanbernabeu/frankendeploy
+    description: CLI to deploy Symfony applications with FrankenPHP
+    license: MIT
+    install: |
+      bin.install "frankendeploy"
+    test: |
+      system "#{bin}/frankendeploy", "--version"

@@ -1,0 +1,94 @@
+#!/bin/bash
+# FrankenDeploy Server Setup Script
+# This script configures a server for FrankenDeploy deployments
+
+set -e
+
+echo "🚀 FrankenDeploy Server Setup"
+echo "=============================="
+
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then
+    echo "Please run as root (sudo)"
+    exit 1
+fi
+
+# Update system
+echo "📦 Updating system packages..."
+apt-get update -qq
+apt-get upgrade -y -qq
+
+# Install Docker
+if ! command -v docker &> /dev/null; then
+    echo "🐳 Installing Docker..."
+    curl -fsSL https://get.docker.com | sh
+else
+    echo "✅ Docker already installed"
+fi
+
+# Create deploy user if not exists
+DEPLOY_USER="{{ .User }}"
+if ! id "$DEPLOY_USER" &>/dev/null; then
+    echo "👤 Creating deploy user..."
+    useradd -m -s /bin/bash "$DEPLOY_USER"
+    usermod -aG docker "$DEPLOY_USER"
+
+    # Setup SSH key
+    mkdir -p /home/$DEPLOY_USER/.ssh
+    cp /root/.ssh/authorized_keys /home/$DEPLOY_USER/.ssh/ 2>/dev/null || true
+    chown -R $DEPLOY_USER:$DEPLOY_USER /home/$DEPLOY_USER/.ssh
+    chmod 700 /home/$DEPLOY_USER/.ssh
+    chmod 600 /home/$DEPLOY_USER/.ssh/authorized_keys 2>/dev/null || true
+else
+    echo "✅ Deploy user already exists"
+    usermod -aG docker "$DEPLOY_USER"
+fi
+
+# Create FrankenDeploy directory structure
+echo "📁 Creating directory structure..."
+mkdir -p /opt/frankendeploy/{apps,caddy/apps,shared}
+chown -R $DEPLOY_USER:$DEPLOY_USER /opt/frankendeploy
+
+# Create Docker network
+echo "🔗 Creating Docker network..."
+docker network create frankendeploy 2>/dev/null || true
+
+# Setup Caddy
+echo "🌐 Setting up Caddy reverse proxy..."
+
+# Create main Caddyfile
+cat > /opt/frankendeploy/caddy/Caddyfile << 'EOF'
+{
+    auto_https on
+    admin off
+}
+
+import /opt/frankendeploy/caddy/apps/*.caddy
+EOF
+
+# Create empty placeholder
+touch /opt/frankendeploy/caddy/apps/.gitkeep
+
+# Pull and start Caddy
+docker pull caddy:alpine
+docker stop caddy 2>/dev/null || true
+docker rm caddy 2>/dev/null || true
+
+docker run -d --name caddy \
+    --network frankendeploy \
+    -p 80:80 -p 443:443 \
+    -v /opt/frankendeploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \
+    -v /opt/frankendeploy/caddy/apps:/opt/frankendeploy/caddy/apps:ro \
+    -v caddy_data:/data \
+    -v caddy_config:/config \
+    --restart unless-stopped \
+    caddy:alpine
+
+# Enable Docker service
+systemctl enable docker
+
+echo ""
+echo "✅ Server setup complete!"
+echo ""
+echo "Server is ready for deployments."
+echo "Deploy with: frankendeploy deploy <server-name>"

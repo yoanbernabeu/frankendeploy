@@ -1,0 +1,148 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import Header from '../components/global/Header.astro';
+import Sidebar from '../components/docs/Sidebar.astro';
+import TableOfContents from '../components/docs/TableOfContents.astro';
+
+interface Props {
+  title: string;
+  description?: string;
+  headings?: { depth: number; slug: string; text: string }[];
+  section?: string;
+  slug?: string;
+}
+
+const { title, description, headings = [], section, slug } = Astro.props;
+---
+
+<BaseLayout title={title} description={description}>
+  <Header />
+
+  <div class="docs-layout">
+    <!-- Sidebar fixe -->
+    <aside class="docs-sidebar" transition:animate="none">
+      <div class="sidebar-container">
+        <Sidebar currentSlug={slug} />
+      </div>
+    </aside>
+
+    <!-- Zone principale scrollable -->
+    <div class="docs-main">
+      <!-- Contenu -->
+      <main class="docs-content">
+        <div class="max-w-4xl mx-auto px-8 py-12">
+          <article class="prose max-w-none" data-pagefind-body>
+            <h1 class="text-4xl font-extrabold text-gradient mb-4">{title}</h1>
+            {description && <p class="text-xl text-[#C3B2D3] mb-8">{description}</p>}
+            <slot />
+          </article>
+        </div>
+      </main>
+
+      <!-- Footer dans la zone de contenu -->
+      <footer class="docs-footer">
+        <div class="max-w-4xl mx-auto px-8 py-8">
+          <div class="flex flex-col sm:flex-row justify-between items-center gap-4 text-sm text-[#C3B2D3]/60">
+            <p>&copy; {new Date().getFullYear()} FrankenDeploy. Open source under MIT license.</p>
+            <div class="flex items-center gap-6">
+              <a href="https://github.com/yoanbernabeu/frankendeploy" target="_blank" rel="noopener" class="hover:text-[#B3D133] transition-colors">GitHub</a>
+              <a href="https://frankenphp.dev" target="_blank" rel="noopener" class="hover:text-[#B3D133] transition-colors">FrankenPHP</a>
+              <a href="https://yoandev.co" target="_blank" rel="noopener" class="text-[#B3D133] hover:underline">YoanDev</a>
+            </div>
+          </div>
+        </div>
+      </footer>
+    </div>
+
+    <!-- Table of Contents fixe -->
+    <aside class="docs-toc">
+      <div class="toc-container">
+        <TableOfContents headings={headings} />
+      </div>
+    </aside>
+  </div>
+
+  <style>
+    .docs-layout {
+      display: flex;
+      min-height: 100vh;
+      padding-top: 5rem;
+      background: #1a0a2e;
+    }
+
+    /* Sidebar */
+    .docs-sidebar {
+      display: none;
+      width: 18rem;
+      flex-shrink: 0;
+    }
+
+    @media (min-width: 1024px) {
+      .docs-sidebar {
+        display: block;
+      }
+    }
+
+    .sidebar-container {
+      position: fixed;
+      top: 5rem;
+      width: 18rem;
+      height: calc(100vh - 5rem);
+      overflow-y: auto;
+      padding: 2rem 1.5rem;
+      border-right: 1px solid rgba(255, 255, 255, 0.08);
+      background: #180828;
+    }
+
+    .sidebar-container::-webkit-scrollbar { width: 4px; }
+    .sidebar-container::-webkit-scrollbar-track { background: transparent; }
+    .sidebar-container::-webkit-scrollbar-thumb {
+      background: rgba(179, 209, 51, 0.3);
+      border-radius: 4px;
+    }
+    .sidebar-container::-webkit-scrollbar-thumb:hover {
+      background: rgba(179, 209, 51, 0.5);
+    }
+
+    /* Zone principale */
+    .docs-main {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      background: #1e0c35;
+    }
+
+    .docs-content {
+      flex: 1;
+    }
+
+    /* Footer docs */
+    .docs-footer {
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      background: #160a28;
+    }
+
+    /* Table of Contents */
+    .docs-toc {
+      display: none;
+      width: 16rem;
+      flex-shrink: 0;
+    }
+
+    @media (min-width: 1280px) {
+      .docs-toc {
+        display: block;
+      }
+    }
+
+    .toc-container {
+      position: fixed;
+      top: 5rem;
+      width: 16rem;
+      height: calc(100vh - 5rem);
+      overflow-y: auto;
+      padding: 2rem 1.5rem;
+    }
+  </style>
+</BaseLayout>

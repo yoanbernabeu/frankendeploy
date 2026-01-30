@@ -1,0 +1,174 @@
+---
+import { navigation } from '../../utils/navigation';
+
+interface Props {
+  currentSlug?: string;
+}
+
+const { currentSlug = '' } = Astro.props;
+
+function normalizeSlug(slug: string): string {
+  return slug.replace(/\.(md|mdx)$/, '').replace(/^\/|\/$/g, '');
+}
+
+function normalizeHref(href: string): string {
+  return href.replace(/^\/frankendeploy\//, '').replace(/^\/|\/$/g, '');
+}
+
+function isActive(href: string): boolean {
+  if (!currentSlug) return false;
+  return normalizeSlug(currentSlug) === normalizeHref(href);
+}
+
+function hasActiveChild(children: { href: string }[] | undefined): boolean {
+  if (!children) return false;
+  return children.some((child) => isActive(child.href));
+}
+---
+
+<nav class="space-y-8" id="sidebar-nav">
+  {navigation.map((section) => (
+    <div class="sidebar-section">
+      <h3 class="sidebar-title">
+        {section.title}
+      </h3>
+      <ul class="space-y-1">
+        {section.items.map((item) => (
+          <li>
+            {item.children ? (
+              <div class="sidebar-group" data-expanded={isActive(item.href) || hasActiveChild(item.children) ? 'true' : 'false'}>
+                <button
+                  class="sidebar-toggle"
+                  type="button"
+                  aria-expanded={isActive(item.href) || hasActiveChild(item.children) ? 'true' : 'false'}
+                >
+                  <svg class="sidebar-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M4.5 2.5L8 6L4.5 9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                  <span>{item.label}</span>
+                </button>
+                <ul class="sidebar-children">
+                  <li>
+                    <a href={item.href} class:list={['sidebar-link', 'sidebar-link-child', { 'active': isActive(item.href) }]}>
+                      Overview
+                    </a>
+                  </li>
+                  {item.children.map((child) => (
+                    <li>
+                      <a href={child.href} class:list={['sidebar-link', 'sidebar-link-child', { 'active': isActive(child.href) }]}>
+                        {child.label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <a href={item.href} class:list={['sidebar-link', { 'active': isActive(item.href) }]}>
+                {item.label}
+              </a>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  ))}
+</nav>
+
+<script>
+  function initSidebar() {
+    const toggles = document.querySelectorAll('.sidebar-toggle');
+
+    toggles.forEach((toggle) => {
+      toggle.addEventListener('click', () => {
+        const group = toggle.closest('.sidebar-group');
+        if (!group) return;
+
+        const isExpanded = group.getAttribute('data-expanded') === 'true';
+        group.setAttribute('data-expanded', isExpanded ? 'false' : 'true');
+        toggle.setAttribute('aria-expanded', isExpanded ? 'false' : 'true');
+      });
+    });
+
+    // Scroll to active link
+    const activeLink = document.querySelector('.sidebar-link.active');
+    if (activeLink) {
+      activeLink.scrollIntoView({ block: 'center', behavior: 'instant' });
+    }
+  }
+
+  // Initial load
+  document.addEventListener('DOMContentLoaded', initSidebar);
+
+  // After View Transition
+  document.addEventListener('astro:page-load', initSidebar);
+</script>
+
+<style>
+  .sidebar-section {
+    @apply mb-8;
+  }
+
+  .sidebar-title {
+    @apply px-4 mb-3 text-xs font-bold uppercase tracking-wider;
+    color: #9d8ab0;
+  }
+
+  .sidebar-link {
+    @apply block px-4 py-2 text-sm rounded-lg transition-all duration-200;
+    color: #C3B2D3;
+  }
+
+  .sidebar-link:hover {
+    color: white;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .sidebar-link.active {
+    color: #B3D133;
+    background: rgba(179, 209, 51, 0.1);
+    border-left: 2px solid #B3D133;
+    padding-left: calc(1rem - 2px);
+  }
+
+  .sidebar-link-child {
+    @apply pl-8;
+    font-size: 0.8125rem;
+  }
+
+  .sidebar-link-child.active {
+    padding-left: calc(2rem - 2px);
+  }
+
+  /* Accordion toggle */
+  .sidebar-toggle {
+    @apply flex items-center gap-2 w-full px-4 py-2 text-sm text-left rounded-lg transition-all duration-200;
+    color: #C3B2D3;
+  }
+
+  .sidebar-toggle:hover {
+    color: white;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .sidebar-chevron {
+    @apply transition-transform duration-200;
+    flex-shrink: 0;
+  }
+
+  .sidebar-group[data-expanded="true"] .sidebar-chevron {
+    transform: rotate(90deg);
+  }
+
+  /* Children list */
+  .sidebar-children {
+    @apply overflow-hidden transition-all duration-200;
+    max-height: 0;
+    opacity: 0;
+  }
+
+  .sidebar-group[data-expanded="true"] .sidebar-children {
+    max-height: 500px;
+    opacity: 1;
+    @apply mt-1;
+  }
+</style>

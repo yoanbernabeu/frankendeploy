@@ -1,0 +1,104 @@
+#!/bin/bash
+# FrankenDeploy Security Hardening Script
+# This script applies security best practices to the server
+
+set -e
+
+echo "🔒 FrankenDeploy Security Hardening"
+echo "===================================="
+
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then
+    echo "Please run as root (sudo)"
+    exit 1
+fi
+
+# Update system
+echo "📦 Updating system packages..."
+apt-get update -qq
+apt-get upgrade -y -qq
+
+# Install security tools
+echo "🛠️ Installing security tools..."
+apt-get install -y -qq \
+    fail2ban \
+    ufw \
+    unattended-upgrades
+
+# Configure UFW firewall
+echo "🔥 Configuring firewall..."
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow ssh
+ufw allow http
+ufw allow https
+echo "y" | ufw enable
+
+# Configure fail2ban
+echo "🚫 Configuring fail2ban..."
+cat > /etc/fail2ban/jail.local << 'EOF'
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 5
+
+[sshd]
+enabled = true
+port = ssh
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 3
+EOF
+
+systemctl restart fail2ban
+
+# SSH hardening
+echo "🔐 Hardening SSH..."
+sed -i 's/#PermitRootLogin yes/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+sed -i 's/X11Forwarding yes/X11Forwarding no/' /etc/ssh/sshd_config
+systemctl restart sshd
+
+# Enable automatic security updates
+echo "🔄 Enabling automatic security updates..."
+cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+
+# Docker security
+echo "🐳 Applying Docker security settings..."
+
+# Limit container capabilities by default
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json << 'EOF'
+{
+    "live-restore": true,
+    "userland-proxy": false,
+    "no-new-privileges": true,
+    "log-driver": "json-file",
+    "log-opts": {
+        "max-size": "10m",
+        "max-file": "3"
+    }
+}
+EOF
+
+systemctl restart docker
+
+# Set proper permissions
+echo "📋 Setting proper permissions..."
+chmod 700 /opt/frankendeploy
+chmod 755 /opt/frankendeploy/apps
+chmod 755 /opt/frankendeploy/caddy
+
+echo ""
+echo "✅ Security hardening complete!"
+echo ""
+echo "Applied security measures:"
+echo "  - UFW firewall enabled (SSH, HTTP, HTTPS only)"
+echo "  - fail2ban configured for SSH protection"
+echo "  - SSH hardened (no root password, no X11)"
+echo "  - Automatic security updates enabled"
+echo "  - Docker security settings applied"

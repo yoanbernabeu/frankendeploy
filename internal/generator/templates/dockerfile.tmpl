@@ -1,0 +1,158 @@
+#syntax=docker/dockerfile:1
+# FrankenDeploy - Dockerfile for {{ .Name }}
+# Based on official Symfony Docker best practices
+
+###################
+# Versions
+###################
+FROM dunglas/frankenphp:{{ default "1" .FrankenPHPVersion }}-php{{ .PHP.Version }} AS frankenphp_upstream
+
+###################
+# Base Stage
+###################
+FROM frankenphp_upstream AS frankenphp_base
+
+WORKDIR /app
+
+VOLUME /app/var/
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    acl \
+    file \
+    gettext \
+    git \
+{{- if .Dockerfile.ExtraPackages }}
+{{- range .Dockerfile.ExtraPackages }}
+    {{ . }} \
+{{- end }}
+{{- end }}
+    && rm -rf /var/lib/apt/lists/*
+{{- if .Dockerfile.ExtraCommands }}
+
+# Custom commands
+{{- range .Dockerfile.ExtraCommands }}
+{{ . }}
+{{- end }}
+{{- end }}
+
+# Install PHP extensions
+RUN set -eux; \
+    install-php-extensions \
+{{- range .PHP.Extensions }}
+        {{ . }} \
+{{- end }}
+        @composer \
+    ;
+
+# SECURITY: Create non-root user for running the application
+ARG UID=1000
+ARG GID=1000
+RUN groupadd --gid ${GID} app && \
+    useradd --uid ${UID} --gid ${GID} --create-home --shell /bin/bash app && \
+    mkdir -p /app/var /data /config && \
+    chown -R app:app /app /data /config
+
+# Allow Composer to run as superuser during build only
+ENV COMPOSER_ALLOW_SUPERUSER=1
+
+# Install netcat for database wait
+RUN apt-get update && apt-get install -y --no-install-recommends netcat-openbsd && rm -rf /var/lib/apt/lists/*
+
+{{- if .PHP.IniValues }}
+
+# Custom PHP settings
+COPY <<EOF $PHP_INI_DIR/conf.d/app.ini
+{{- range .PHP.IniValues }}
+{{ . }}
+{{- end }}
+EOF
+{{- end }}
+
+# Copy entrypoint script
+COPY --link --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint
+
+ENTRYPOINT ["docker-entrypoint"]
+HEALTHCHECK --start-period=60s CMD curl -f http://localhost:2019/metrics || exit 1
+CMD ["frankenphp", "run", "--config", "/etc/caddy/Caddyfile"]
+
+###################
+# Development Stage
+###################
+FROM frankenphp_base AS frankenphp_dev
+
+ENV APP_ENV=dev
+ENV XDEBUG_MODE=off
+
+RUN mv "$PHP_INI_DIR/php.ini-development" "$PHP_INI_DIR/php.ini"
+
+# Copy source and install dependencies
+COPY --link . ./
+RUN set -eux; \
+    composer install --no-scripts --no-progress --prefer-dist; \
+    # Build Symfony assets (Sass, AssetMapper)
+    if php bin/console list 2>/dev/null | grep -q "sass:build"; then \
+        php bin/console sass:build; \
+    fi; \
+    if php bin/console list 2>/dev/null | grep -q "importmap:install"; then \
+        php bin/console importmap:install; \
+    fi; \
+    # Store built assets for volume mount
+    mkdir -p /app-assets && cp -r public/assets var/sass /app-assets/ 2>/dev/null || true
+
+# SECURITY: Run as non-root user
+USER app
+
+# Note: source code is mounted as volume in dev mode
+CMD ["frankenphp", "run", "--config", "/etc/caddy/Caddyfile", "--watch"]
+
+###################
+# Production Stage
+###################
+FROM frankenphp_base AS frankenphp_prod
+
+ENV APP_ENV=prod
+ENV APP_DEBUG=0
+
+RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
+
+# Copy composer files first for better caching
+COPY --link composer.* symfony.* ./
+
+# Install dependencies (no dev)
+RUN set -eux; \
+    composer install --no-cache --prefer-dist --no-dev --no-autoloader --no-scripts --no-progress
+
+# Copy application source
+COPY --link . ./
+
+# Generate autoloader (required before running any Symfony commands)
+RUN composer dump-autoload --classmap-authoritative --no-dev
+
+# Build assets
+{{- if and .Assets .Assets.BuildTool }}
+{{- if eq .Assets.BuildTool "assetmapper" }}
+# AssetMapper: install importmap dependencies and compile assets
+RUN set -eux; \
+    php bin/console importmap:install --no-interaction; \
+    php bin/console asset-map:compile --no-interaction
+{{- else }}
+# Webpack/Vite: install Node.js and build
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm && \
+    {{ .Assets.BuildCommand }} && \
+    apt-get purge -y nodejs npm && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+{{- end }}
+{{- end }}
+
+# Finalize build
+# Note: We don't use "composer dump-env prod" because env vars are provided at runtime
+# via mounted .env.local or Docker environment variables
+RUN set -eux; \
+    mkdir -p var/cache var/log; \
+    composer run-script --no-dev post-install-cmd || true; \
+    chmod +x bin/console; \
+    chown -R app:app /app; \
+    sync
+
+# SECURITY: Run as non-root user
+USER app

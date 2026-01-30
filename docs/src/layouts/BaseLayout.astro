@@ -1,0 +1,57 @@
+---
+import { ViewTransitions } from 'astro:transitions';
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const {
+  title,
+  description = 'Deploy Symfony applications on VPS with FrankenPHP. Zero-config Docker setup, automatic HTTPS, and rolling deployments.',
+} = Astro.props;
+
+const canonicalURL = new URL(Astro.url.pathname, Astro.site);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="generator" content={Astro.generator} />
+
+    <title>{title} | FrankenDeploy</title>
+    <meta name="title" content={`${title} | FrankenDeploy`} />
+    <meta name="description" content={description} />
+    <meta name="keywords" content="FrankenDeploy, FrankenPHP, Symfony, Docker, VPS, deployment, PHP, Caddy" />
+
+    <link rel="canonical" href={canonicalURL} />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonicalURL} />
+    <meta property="og:title" content={`${title} | FrankenDeploy`} />
+    <meta property="og:description" content={description} />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={`${title} | FrankenDeploy`} />
+    <meta name="twitter:description" content={description} />
+
+    <link rel="icon" type="image/png" sizes="32x32" href="/frankendeploy/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/frankendeploy/favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/frankendeploy/apple-touch-icon.png" />
+
+    <ViewTransitions />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+    <style is:global>
+      @import '../styles/global.css';
+    </style>
+  </head>
+  <body class="min-h-screen flex flex-col bg-[#120020] text-[#C3B2D3]">
+    <slot />
+  </body>
+</html>

@@ -1,0 +1,23 @@
+---
+import { Image } from 'astro:assets';
+import frankenbear from '../../asset/frankenbear.png';
+
+interface Props {
+  size?: number;
+  showText?: boolean;
+}
+
+const { size = 32, showText = false } = Astro.props;
+---
+
+<div class="flex items-center gap-2">
+  <Image
+    src={frankenbear}
+    alt="FrankenDeploy"
+    width={size}
+    height={size}
+    quality={100}
+    class="drop-shadow-sm"
+  />
+  {showText && <span class="font-bold text-lg text-gradient">FrankenDeploy</span>}
+</div>

@@ -1,0 +1,88 @@
+---
+interface Heading {
+  depth: number;
+  slug: string;
+  text: string;
+}
+
+interface Props {
+  headings: Heading[];
+}
+
+const { headings } = Astro.props;
+const filteredHeadings = headings.filter((h) => h.depth >= 2 && h.depth <= 3);
+---
+
+{filteredHeadings.length > 0 && (
+  <div class="sticky top-8">
+    <h4 class="text-xs font-bold uppercase tracking-wider mb-4 text-[#9d8ab0]">Sur cette page</h4>
+    <nav id="toc-nav">
+      <ul class="space-y-2 text-sm">
+        {filteredHeadings.map((heading) => (
+          <li>
+            <a
+              href={`#${heading.slug}`}
+              class:list={['toc-link', { 'toc-link-nested': heading.depth === 3 }]}
+              data-slug={heading.slug}
+            >
+              {heading.text}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  </div>
+)}
+
+<style>
+  .toc-link {
+    display: block;
+    position: relative;
+    padding-left: 1rem;
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+    border-left: 2px solid rgba(255, 255, 255, 0.1);
+    color: #9d8ab0;
+    transition: all 0.2s ease;
+  }
+
+  .toc-link:hover {
+    color: #C3B2D3;
+    border-left-color: rgba(179, 209, 51, 0.3);
+  }
+
+  .toc-link.active {
+    color: #B3D133;
+    border-left-color: #B3D133;
+  }
+
+  .toc-link-nested {
+    padding-left: 1.5rem;
+    font-size: 0.8125rem;
+  }
+</style>
+
+<script>
+  const tocLinks = document.querySelectorAll('.toc-link');
+  const headings = Array.from(document.querySelectorAll('article h2, article h3'));
+
+  function updateActiveLink() {
+    const scrollPosition = window.scrollY + 100;
+    let currentHeading = headings[0];
+    for (const heading of headings) {
+      if ((heading as HTMLElement).offsetTop <= scrollPosition) {
+        currentHeading = heading;
+      }
+    }
+
+    tocLinks.forEach((link) => {
+      link.classList.remove('active');
+      if (link.getAttribute('data-slug') === currentHeading?.id) {
+        link.classList.add('active');
+      }
+    });
+  }
+
+  window.addEventListener('scroll', updateActiveLink, { passive: true });
+  updateActiveLink();
+</script>

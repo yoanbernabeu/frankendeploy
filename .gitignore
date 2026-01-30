@@ -1,0 +1,48 @@
+# Binaries (at root only)
+/frankendeploy
+/gendocs
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+node_modules/
+
+# Go workspace file
+go.work
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build output
+dist/
+build/
+bin/
+coverage.out
+coverage.html
+
+# Local config (user-specific)
+.frankendeploy.local.yaml
+
+# Documentation build
+docs/dist/
+docs/.astro/
+
+# Cobra-generated docs (generated during CI/CD)
+docs/src/content/docs/commands/
