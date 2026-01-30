@@ -5,7 +5,9 @@ description: Managing environment variables in production
 
 ## Overview
 
-FrankenDeploy stores environment variables in a shared `.env.local` file on the server. This file is mounted into the container and persists across deployments.
+FrankenDeploy stores environment variables **per application** in a `.env.local` file on the server. Each application has its own isolated environment variables that persist across deployments.
+
+**Important:** Environment variables are tied to the current project (defined in `frankendeploy.yaml`), not to the server globally.
 
 ## Setting Variables
 

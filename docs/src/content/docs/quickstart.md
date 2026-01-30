@@ -75,7 +75,7 @@ The `--email` is required for Let's Encrypt SSL certificates.
 
 ## Step 5: Configure Environment Variables
 
-Set your production secrets on the server:
+Set your production secrets for this application (run from your project directory):
 
 ```bash
 frankendeploy env set production DATABASE_URL="postgresql://user:pass@host/db"

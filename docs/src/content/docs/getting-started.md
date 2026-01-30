@@ -65,7 +65,7 @@ frankendeploy dev up
 frankendeploy server add production deploy@my-vps.com --key ~/.ssh/id_rsa
 frankendeploy server setup production --email admin@example.com
 
-# Set environment variables
+# Set environment variables for this app
 frankendeploy env set production DATABASE_URL="postgresql://..."
 
 # Deploy!
