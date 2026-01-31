@@ -27,8 +27,11 @@ type DatabaseConfig struct {
 	Host    string `yaml:"host,omitempty"`
 	Port    int    `yaml:"port,omitempty"`
 	Name    string `yaml:"name,omitempty"`
+	// Path: file path for SQLite database (relative to project root)
+	Path string `yaml:"path,omitempty"`
 	// Managed: if true, FrankenDeploy creates a DB container in production
 	// If false, expects external DATABASE_URL in .env.local
+	// Note: SQLite does not support managed mode (file-based database)
 	Managed *bool `yaml:"managed,omitempty"`
 }
 

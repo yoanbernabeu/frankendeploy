@@ -155,6 +155,14 @@ func (s *Scanner) ToProjectConfig(result *config.ScanResult, name string) *confi
 	cfg.Database = result.Database
 	cfg.Assets = result.Assets
 
+	// For SQLite, add the database directory to shared_dirs for persistence
+	if result.Database.Driver == "sqlite" && result.Database.Path != "" {
+		sqliteDir := getSQLiteDirectory(result.Database.Path)
+		if sqliteDir != "" && !contains(cfg.Deploy.SharedDirs, sqliteDir) {
+			cfg.Deploy.SharedDirs = append(cfg.Deploy.SharedDirs, sqliteDir)
+		}
+	}
+
 	// Auto-fill Messenger config if detected
 	if result.HasMessenger {
 		cfg.Messenger = config.MessengerConfig{
@@ -168,6 +176,16 @@ func (s *Scanner) ToProjectConfig(result *config.ScanResult, name string) *confi
 	cfg.Deploy.Hooks = s.generateDefaultHooks(result)
 
 	return cfg
+}
+
+// contains checks if a string slice contains a specific value
+func contains(slice []string, value string) bool {
+	for _, v := range slice {
+		if v == value {
+			return true
+		}
+	}
+	return false
 }
 
 // generateDefaultHooks creates default deployment hooks based on detected features

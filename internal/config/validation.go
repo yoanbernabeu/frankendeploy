@@ -70,6 +70,16 @@ func ValidateProjectConfig(config *ProjectConfig) ValidationErrors {
 				Message: "unsupported database driver (use pgsql, mysql, or sqlite)",
 			})
 		}
+
+		// SQLite cannot use managed mode (file-based database, not a container)
+		if isSQLiteDriver(config.Database.Driver) {
+			if config.Database.Managed != nil && *config.Database.Managed {
+				errors = append(errors, ValidationError{
+					Field:   "database.managed",
+					Message: "SQLite does not support managed mode. SQLite is a file-based database and cannot run as a container. Remove 'managed: true' from your configuration. The SQLite database directory should be in 'deploy.shared_dirs' for persistence",
+				})
+			}
+		}
 	}
 
 	if config.Deploy.KeepReleases < 0 {
@@ -133,4 +143,8 @@ func isValidDatabaseDriver(driver string) bool {
 		}
 	}
 	return false
+}
+
+func isSQLiteDriver(driver string) bool {
+	return driver == "sqlite" || driver == "pdo_sqlite"
 }

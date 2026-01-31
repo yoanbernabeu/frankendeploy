@@ -90,6 +90,27 @@ database:
   version: "16"       # Database version
 ```
 
+#### SQLite Configuration
+
+SQLite is a file-based database and is handled differently from PostgreSQL and MySQL:
+
+```yaml
+database:
+  driver: sqlite
+  version: "3"
+  path: var/data.db   # Automatically detected from DATABASE_URL
+```
+
+Key differences for SQLite:
+- **No `managed` option**: SQLite cannot run as a container, so `managed: true` is not allowed
+- **Automatic shared_dirs**: The SQLite database directory is automatically added to `shared_dirs` for persistence
+- **Path detection**: The file path is extracted from your `DATABASE_URL` in `.env`
+
+Example `.env` for SQLite:
+```bash
+DATABASE_URL="sqlite:///%kernel.project_dir%/var/data.db"
+```
+
 ### `assets`
 
 Frontend asset build configuration.
