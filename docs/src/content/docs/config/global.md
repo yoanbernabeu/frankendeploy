@@ -27,6 +27,7 @@ servers:
     user: deploy
     port: 22
     key_path: ~/.ssh/id_ed25519
+    remote_build: true  # Build images on server (for cross-architecture)
     apps:
       my-app: /opt/frankendeploy/apps/my-app
 
@@ -66,7 +67,20 @@ Use `--skip-test` to skip the automatic SSH connection test.
 | `user` | SSH username | Required |
 | `port` | SSH port | 22 |
 | `key_path` | Path to SSH private key | Auto-detected |
+| `remote_build` | Build Docker images on server instead of locally | Auto-detected |
 | `apps` | Deployed applications | Auto-populated |
+
+### Configuring Server Options
+
+Use `frankendeploy server set` to configure server-specific options:
+
+```bash
+# Enable remote build for a server
+frankendeploy server set production remote_build true
+
+# Disable remote build
+frankendeploy server set production remote_build false
+```
 
 ### Managing Servers
 

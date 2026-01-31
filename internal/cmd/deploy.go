@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -37,10 +38,11 @@ CI/CD: If no server is specified, FRANKENDEPLOY_SERVER environment variable is u
 }
 
 var (
-	deployTag         string
-	deployForce       bool
-	deployNoBuild     bool
-	deployRemoteBuild bool
+	deployTag           string
+	deployForce         bool
+	deployNoBuild       bool
+	deployRemoteBuild   bool
+	deployNoRemoteBuild bool
 )
 
 func init() {
@@ -49,6 +51,7 @@ func init() {
 	deployCmd.Flags().BoolVarP(&deployForce, "force", "f", false, "Force deployment even if checks fail")
 	deployCmd.Flags().BoolVar(&deployNoBuild, "no-build", false, "Skip image build (use existing image)")
 	deployCmd.Flags().BoolVar(&deployRemoteBuild, "remote-build", false, "Build image on the server (recommended for cross-architecture)")
+	deployCmd.Flags().BoolVar(&deployNoRemoteBuild, "no-remote-build", false, "Force local build (ignore saved preference)")
 }
 
 func runDeploy(cmd *cobra.Command, args []string) error {
@@ -104,6 +107,15 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 	PrintSuccess("Connected")
+
+	// Step 1a: Check architecture compatibility
+	useRemoteBuild, err := checkArchitectureMismatch(client, serverCfg, globalCfg, serverName)
+	if err != nil {
+		return err
+	}
+	if useRemoteBuild && !deployRemoteBuild {
+		deployRemoteBuild = true
+	}
 
 	// Step 1b: Pre-flight environment check
 	if !deployForce {
@@ -958,5 +970,112 @@ func checkAndWarnMigrationState(client *ssh.Client, appName string) {
 	// Mark warning as shown so we don't repeat it
 	if err := deploy.MarkMigrationWarningShown(client, appName); err != nil {
 		PrintVerbose("Could not mark migration warning as shown: %v", err)
+	}
+}
+
+// checkArchitectureMismatch detects if local and server architectures are incompatible
+// Returns: (shouldUseRemoteBuild bool, err error)
+func checkArchitectureMismatch(client *ssh.Client, serverCfg *config.ServerConfig, globalCfg *config.GlobalConfig, serverName string) (bool, error) {
+	// 1. Check explicit flags first
+	if deployNoRemoteBuild {
+		return false, nil // User explicitly wants local build
+	}
+	if deployRemoteBuild {
+		return true, nil // User explicitly wants remote build
+	}
+
+	// 2. Check saved server preference
+	if serverCfg.RemoteBuild != nil {
+		if *serverCfg.RemoteBuild {
+			PrintInfo("Using remote build (server configured for cross-architecture)")
+		}
+		return *serverCfg.RemoteBuild, nil
+	}
+
+	// 3. Detect architectures
+	localArch := runtime.GOARCH // "arm64" on Mac Silicon, "amd64" on Intel
+	serverArch, err := client.GetServerArchitecture()
+	if err != nil {
+		PrintWarning("Could not detect server architecture: %v", err)
+		return false, nil // Default to local build
+	}
+
+	// Normalize architectures for comparison
+	localNorm := normalizeArch(localArch)
+	serverNorm := normalizeArch(serverArch)
+
+	// 4. No mismatch - continue with local build
+	if localNorm == serverNorm {
+		return false, nil
+	}
+
+	// 5. Mismatch detected - handle based on mode
+	return handleArchitectureMismatch(serverCfg, globalCfg, serverName, localArch, serverArch)
+}
+
+// normalizeArch converts architecture names to a common format
+func normalizeArch(arch string) string {
+	arch = strings.TrimSpace(strings.ToLower(arch))
+	switch arch {
+	case "arm64", "aarch64":
+		return "arm64"
+	case "amd64", "x86_64":
+		return "amd64"
+	default:
+		return arch
+	}
+}
+
+// handleArchitectureMismatch handles the case where local and server architectures differ
+func handleArchitectureMismatch(serverCfg *config.ServerConfig, globalCfg *config.GlobalConfig, serverName, localArch, serverArch string) (bool, error) {
+	// Display warning
+	PrintWarning("Architecture mismatch detected:")
+	fmt.Printf("   Local:  %s", localArch)
+	if localArch == "arm64" {
+		fmt.Printf(" (Apple Silicon)")
+	}
+	fmt.Println()
+	fmt.Printf("   Server: %s\n", serverArch)
+	fmt.Println()
+	fmt.Println("   Local builds will not run on this server.")
+	fmt.Println()
+
+	// Non-interactive mode: fail with clear error
+	if !IsInteractive() {
+		PrintError("Architecture mismatch: local %s → server %s", localArch, serverArch)
+		fmt.Println()
+		fmt.Println("   Add --remote-build flag or configure server:")
+		fmt.Printf("   frankendeploy server set %s remote_build true\n", serverName)
+		return false, fmt.Errorf("architecture mismatch requires --remote-build flag in CI/CD mode")
+	}
+
+	// Interactive mode: prompt user
+	options := []string{
+		"Use remote build for this server (Recommended)",
+		"Continue with local build anyway",
+	}
+
+	choice := PromptSelect("Use remote build for this server?", options)
+
+	switch choice {
+	case 0: // Use remote build
+		// Save preference
+		remoteBuild := true
+		serverCfg.RemoteBuild = &remoteBuild
+		globalCfg.Servers[serverName] = *serverCfg
+
+		if err := config.SaveGlobalConfig(globalCfg); err != nil {
+			PrintWarning("Could not save preference: %v", err)
+		} else {
+			PrintSuccess("Server '%s' configured for remote builds", serverName)
+		}
+		return true, nil
+
+	case 1: // Local build
+		PrintWarning("Continuing with local build (may fail with 'exec format error')")
+		return false, nil
+
+	default: // Skip/Cancel
+		return false, fmt.Errorf("deployment cancelled by user")
 	}
 }

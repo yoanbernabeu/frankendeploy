@@ -87,12 +87,13 @@ type GlobalConfig struct {
 
 // ServerConfig represents a configured server
 type ServerConfig struct {
-	Name    string            `yaml:"name,omitempty"`
-	Host    string            `yaml:"host"`
-	User    string            `yaml:"user"`
-	Port    int               `yaml:"port,omitempty"`
-	KeyPath string            `yaml:"key_path,omitempty"`
-	Apps    map[string]string `yaml:"apps,omitempty"`
+	Name        string            `yaml:"name,omitempty"`
+	Host        string            `yaml:"host"`
+	User        string            `yaml:"user"`
+	Port        int               `yaml:"port,omitempty"`
+	KeyPath     string            `yaml:"key_path,omitempty"`
+	Apps        map[string]string `yaml:"apps,omitempty"`
+	RemoteBuild *bool             `yaml:"remote_build,omitempty"`
 }
 
 // AppConfig represents a deployed application on a server
