@@ -128,7 +128,33 @@ func (o *Orchestrator) prepareDirectories(releasePath, sharedPath string) error 
 		commands = append(commands, fmt.Sprintf("mkdir -p %s/%s", sharedPath, dir))
 	}
 
-	return o.runCommands(commands)
+	if err := o.runCommands(commands); err != nil {
+		return err
+	}
+
+	// Fix permissions for container user 1000:1000
+	o.fixSharedPermissions(sharedPath)
+
+	return nil
+}
+
+// fixSharedPermissions ensures shared directories have correct ownership for container user 1000:1000
+func (o *Orchestrator) fixSharedPermissions(sharedPath string) {
+	// Fix shared directory ownership
+	cmd := fmt.Sprintf("sudo chown 1000:1000 %s 2>/dev/null || true", sharedPath)
+	_, _ = o.client.Exec(cmd)
+
+	// Fix shared subdirectories recursively
+	for _, dir := range o.config.Deploy.SharedDirs {
+		dirPath := fmt.Sprintf("%s/%s", sharedPath, dir)
+		cmd := fmt.Sprintf("sudo chown -R 1000:1000 %s 2>/dev/null || true", dirPath)
+		_, _ = o.client.Exec(cmd)
+	}
+
+	// Fix .env.local ownership and permissions
+	envPath := fmt.Sprintf("%s/.env.local", sharedPath)
+	_, _ = o.client.Exec(fmt.Sprintf("sudo chown 1000:1000 %s 2>/dev/null || true", envPath))
+	_, _ = o.client.Exec(fmt.Sprintf("sudo chmod 600 %s 2>/dev/null || true", envPath))
 }
 
 func (o *Orchestrator) stopContainer() {
