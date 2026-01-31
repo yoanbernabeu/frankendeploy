@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/frankendeploy/internal/caddy"
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
+	"github.com/yoanbernabeu/frankendeploy/internal/deploy"
 	"github.com/yoanbernabeu/frankendeploy/internal/security"
 	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
 )
@@ -103,6 +104,15 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 	PrintSuccess("Connected")
+
+	// Step 1b: Pre-flight environment check
+	if !deployForce {
+		PrintInfo("Running pre-flight checks...")
+		if err := runEnvPreflightCheck(client, projectCfg, serverName); err != nil {
+			return err
+		}
+		PrintSuccess("Pre-flight checks passed")
+	}
 
 	if deployRemoteBuild {
 		// Remote build: transfer source code and build on server
@@ -790,4 +800,112 @@ func generateRandomPassword(length int) string {
 	bytes := make([]byte, length/2)
 	_, _ = rand.Read(bytes)
 	return hex.EncodeToString(bytes)
+}
+
+// runEnvPreflightCheck verifies required environment variables before deployment
+func runEnvPreflightCheck(client *ssh.Client, cfg *config.ProjectConfig, serverName string) error {
+	result, err := deploy.CheckEnvVars(client, cfg, serverName)
+	if err != nil {
+		return fmt.Errorf("failed to check environment variables: %w", err)
+	}
+
+	// No missing variables, continue
+	if len(result.Missing) == 0 {
+		return nil
+	}
+
+	// Check if any variables can be auto-generated
+	canGenerate := false
+	for _, req := range result.Missing {
+		if req.CanGenerate {
+			canGenerate = true
+			break
+		}
+	}
+
+	// Interactive mode: prompt user
+	if IsInteractive() && canGenerate {
+		return handleInteractiveEnvCheck(client, cfg, result, serverName)
+	}
+
+	// Non-interactive mode or cannot generate: show error
+	PrintError(deploy.FormatEnvCheckError(result.Missing, serverName))
+	return fmt.Errorf("missing required environment variables")
+}
+
+// handleInteractiveEnvCheck handles missing env vars in interactive mode
+func handleInteractiveEnvCheck(client *ssh.Client, cfg *config.ProjectConfig, result *deploy.EnvCheckResult, serverName string) error {
+	// Show missing variables
+	PrintWarning("Missing required environment variables:")
+	for _, req := range result.Missing {
+		fmt.Printf("   - %s\n", req.Name)
+	}
+	fmt.Println()
+
+	// Check which variables cannot be auto-generated
+	var nonGeneratable []deploy.EnvRequirement
+	for _, req := range result.Missing {
+		if !req.CanGenerate {
+			nonGeneratable = append(nonGeneratable, req)
+		}
+	}
+
+	// If there are non-generatable variables, we can't proceed automatically
+	if len(nonGeneratable) > 0 {
+		PrintError("The following variables cannot be auto-generated:")
+		for _, req := range nonGeneratable {
+			fmt.Printf("   - %s (%s)\n", req.Name, req.Description)
+		}
+		fmt.Println()
+		PrintInfo("Run the following commands to configure them:")
+		for _, req := range nonGeneratable {
+			if req.Name == "DATABASE_URL" {
+				fmt.Printf("   frankendeploy env set %s DATABASE_URL=\"postgresql://user:pass@host:5432/db\"\n", serverName)
+			} else {
+				fmt.Printf("   frankendeploy env set %s %s=\"<value>\"\n", serverName, req.Name)
+			}
+		}
+		return fmt.Errorf("missing required environment variables that cannot be auto-generated")
+	}
+
+	// All missing variables can be generated - prompt user
+	options := []string{
+		"Generate missing secrets automatically (Recommended)",
+		"Show commands to set manually",
+	}
+
+	choice := PromptSelect("How would you like to proceed?", options)
+
+	switch choice {
+	case 0: // Generate automatically
+		generated, err := deploy.GenerateMissingSecrets(result.Missing)
+		if err != nil {
+			return fmt.Errorf("failed to generate secrets: %w", err)
+		}
+
+		if err := deploy.SaveGeneratedSecrets(client, cfg.Name, generated); err != nil {
+			return fmt.Errorf("failed to save generated secrets: %w", err)
+		}
+
+		for key := range generated {
+			PrintSuccess("Generated %s", key)
+		}
+		PrintInfo("Continuing deployment...")
+		return nil
+
+	case 1: // Show commands
+		fmt.Println()
+		PrintInfo("Run the following commands to configure them:")
+		for _, req := range result.Missing {
+			if req.Name == "APP_SECRET" {
+				fmt.Printf("   frankendeploy env set %s APP_SECRET=$(openssl rand -hex 32)\n", serverName)
+			} else {
+				fmt.Printf("   frankendeploy env set %s %s=\"<value>\"\n", serverName, req.Name)
+			}
+		}
+		return fmt.Errorf("deployment cancelled - please set environment variables first")
+
+	default: // Skip (0)
+		return fmt.Errorf("deployment cancelled by user")
+	}
 }
