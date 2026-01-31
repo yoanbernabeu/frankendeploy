@@ -42,8 +42,12 @@ database:
   # Database version for Docker image
   version: "16"
 
-  # Managed: if true (default), FrankenDeploy creates a DB container
+  # Path: SQLite database file path (only for sqlite driver)
+  # path: var/data.db
+
+  # Managed: if true (default for pgsql/mysql), FrankenDeploy creates a DB container
   # If false, expects external DATABASE_URL in .env.local
+  # Note: SQLite does NOT support managed mode (file-based database)
   managed: true
 
 # Symfony Messenger Workers (optional)
@@ -165,14 +169,32 @@ Common extensions:
 | `mysql` | mysql:VERSION |
 | `sqlite` | No container needed |
 
+### `database.path`
+
+**SQLite only.** The file path for the SQLite database (relative to project root).
+
+```yaml
+database:
+  driver: sqlite
+  path: var/data.db
+```
+
+When using SQLite, FrankenDeploy automatically adds the database directory (e.g., `var`) to `shared_dirs` to ensure data persistence across deployments.
+
 ### `database.managed`
 
 Controls how the database is provisioned in production:
 
 | Value | Behavior |
 |-------|----------|
-| `true` (default) | FrankenDeploy creates a Docker container for the DB |
+| `true` (default for pgsql/mysql) | FrankenDeploy creates a Docker container for the DB |
 | `false` | Use external database, set `DATABASE_URL` in `.env.local` |
+
+:::caution[SQLite Limitation]
+SQLite does **not** support `managed: true`. SQLite is a file-based database and cannot run as a container. If you set `managed: true` with SQLite, validation will fail with an error.
+
+For SQLite persistence in production, ensure the database directory is in `shared_dirs`.
+:::
 
 ### `messenger`
 

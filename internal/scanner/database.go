@@ -9,17 +9,54 @@ import (
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
 )
 
+// extractSQLitePath extracts the file path from a SQLite DATABASE_URL
+func extractSQLitePath(url string) string {
+	// Remove the sqlite:// prefix (case-insensitive)
+	path := url
+	lowerURL := strings.ToLower(url)
+	if strings.HasPrefix(lowerURL, "sqlite://") {
+		path = url[9:] // Keep original case for the path
+	} else if strings.HasPrefix(lowerURL, "sqlite:") {
+		path = url[7:]
+	}
+
+	// Handle Symfony's %kernel.project_dir% placeholder
+	path = strings.ReplaceAll(path, "%kernel.project_dir%", "")
+
+	// Remove leading slashes
+	path = strings.TrimLeft(path, "/")
+
+	// Default to var/data.db if empty
+	if path == "" {
+		return "var/data.db"
+	}
+
+	return path
+}
+
+// getSQLiteDirectory returns the directory containing the SQLite file
+func getSQLiteDirectory(path string) string {
+	dir := filepath.Dir(path)
+	if dir == "." || dir == "" {
+		return ""
+	}
+	return dir
+}
+
 // DetectDatabase detects the database configuration from the project
 func (s *Scanner) DetectDatabase() (*config.DatabaseConfig, error) {
 	dbConfig := &config.DatabaseConfig{}
-	managed := true // Default: FrankenDeploy manages the DB in production
 
 	// First, check doctrine.yaml for explicit driver
 	if doctrineConfig, err := s.GetDoctrineConfig(); err == nil {
 		if driver := doctrineConfig.Doctrine.DBAL.Driver; driver != "" {
 			dbConfig.Driver = normalizeDriver(driver)
 			dbConfig.Version = getDefaultVersion(dbConfig.Driver)
-			dbConfig.Managed = &managed
+			// SQLite doesn't support managed mode (file-based database)
+			if dbConfig.Driver != "sqlite" {
+				managed := true
+				dbConfig.Managed = &managed
+			}
 			return dbConfig, nil
 		}
 	}
@@ -31,7 +68,13 @@ func (s *Scanner) DetectDatabase() (*config.DatabaseConfig, error) {
 			if driver != "" {
 				dbConfig.Driver = driver
 				dbConfig.Version = version
-				dbConfig.Managed = &managed
+				// SQLite: extract path and don't set managed
+				if driver == "sqlite" {
+					dbConfig.Path = extractSQLitePath(dbURL)
+				} else {
+					managed := true
+					dbConfig.Managed = &managed
+				}
 				return dbConfig, nil
 			}
 		}
@@ -57,6 +100,7 @@ func (s *Scanner) DetectDatabase() (*config.DatabaseConfig, error) {
 			dbConfig.Driver = "pgsql"
 			dbConfig.Version = "16"
 		}
+		managed := true
 		dbConfig.Managed = &managed
 		return dbConfig, nil
 	}

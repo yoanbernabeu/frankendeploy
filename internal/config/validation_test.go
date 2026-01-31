@@ -4,6 +4,11 @@ import (
 	"testing"
 )
 
+// boolPtr returns a pointer to a bool value
+func boolPtr(b bool) *bool {
+	return &b
+}
+
 func TestValidateProjectConfig(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -79,6 +84,78 @@ func TestValidateProjectConfig(t *testing.T) {
 				Database: DatabaseConfig{
 					Driver:  "pgsql",
 					Version: "16",
+				},
+			},
+			wantErrors: false,
+		},
+		{
+			name: "sqlite without managed is valid",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Database: DatabaseConfig{
+					Driver: "sqlite",
+					Path:   "var/data.db",
+				},
+			},
+			wantErrors: false,
+		},
+		{
+			name: "sqlite with managed=false is valid",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Database: DatabaseConfig{
+					Driver:  "sqlite",
+					Path:    "var/data.db",
+					Managed: boolPtr(false),
+				},
+			},
+			wantErrors: false,
+		},
+		{
+			name: "sqlite with managed=true is invalid",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Database: DatabaseConfig{
+					Driver:  "sqlite",
+					Managed: boolPtr(true),
+				},
+			},
+			wantErrors: true,
+		},
+		{
+			name: "pdo_sqlite with managed=true is invalid",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Database: DatabaseConfig{
+					Driver:  "pdo_sqlite",
+					Managed: boolPtr(true),
+				},
+			},
+			wantErrors: true,
+		},
+		{
+			name: "pgsql with managed=true is valid",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Database: DatabaseConfig{
+					Driver:  "pgsql",
+					Version: "16",
+					Managed: boolPtr(true),
 				},
 			},
 			wantErrors: false,
