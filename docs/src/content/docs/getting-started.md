@@ -62,7 +62,7 @@ frankendeploy build
 frankendeploy dev up
 
 # Configure a server (one-time setup)
-frankendeploy server add production deploy@my-vps.com --key ~/.ssh/id_rsa
+frankendeploy server add production deploy@my-vps.com
 frankendeploy server setup production --email admin@example.com
 
 # Set environment variables for this app

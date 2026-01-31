@@ -41,17 +41,22 @@ servers:
 ### Adding Servers
 
 ```bash
-frankendeploy server add production deploy@prod.example.com --key ~/.ssh/id_rsa
+frankendeploy server add production deploy@prod.example.com
 ```
+
+FrankenDeploy automatically tests the SSH connection after adding a server. If the default key doesn't work, it will:
+- In interactive mode: show available keys and let you choose
+- In CI/CD mode (`--yes`): try keys automatically
 
 With all options:
 ```bash
 frankendeploy server add staging deploy@staging.example.com \
   --port 2222 \
-  --key ~/.ssh/id_rsa
+  --key ~/.ssh/id_rsa \
+  --skip-test
 ```
 
-**Important:** Always specify `--key` if you have multiple SSH keys to avoid authentication issues.
+Use `--skip-test` to skip the automatic SSH connection test.
 
 ### Server Fields
 
@@ -82,10 +87,15 @@ frankendeploy server remove staging
 
 ## SSH Key Auto-detection
 
-If `key_path` is not specified, FrankenDeploy looks for:
+When adding a server, FrankenDeploy tests the SSH connection. If the connection fails, it discovers available keys in `~/.ssh/` and tries them in order of preference:
 
-1. `~/.ssh/id_ed25519`
+1. `~/.ssh/id_ed25519` (preferred)
 2. `~/.ssh/id_rsa`
+3. Other `id_*` or `*.pem` files
+
+The first working key is automatically saved to the configuration.
+
+**Note:** Passphrase-protected keys are skipped during auto-detection.
 
 ## Multiple Projects
 

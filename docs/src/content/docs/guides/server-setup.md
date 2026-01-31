@@ -14,8 +14,14 @@ Your VPS should have:
 ## Adding a Server
 
 ```bash
-frankendeploy server add production deploy@your-server.com --key ~/.ssh/id_rsa
+frankendeploy server add production deploy@your-server.com
 ```
+
+After adding a server, FrankenDeploy **automatically tests the SSH connection**. If the connection fails, it will:
+- **Interactive mode:** List available SSH keys and let you choose one
+- **CI/CD mode (`--yes`):** Automatically try available keys until one works
+
+The working key is saved to your configuration.
 
 ### Options
 
@@ -23,29 +29,38 @@ frankendeploy server add production deploy@your-server.com --key ~/.ssh/id_rsa
 |--------|-------------|---------|
 | `--port` | SSH port | 22 |
 | `--key` | Path to SSH private key | Auto-detect |
+| `--skip-test` | Skip SSH connection test | false |
 
 ### Examples
 
-Standard VPS:
+Standard VPS (auto-detect key):
 ```bash
-frankendeploy server add prod deploy@51.210.xx.xx --key ~/.ssh/id_rsa
+frankendeploy server add prod deploy@51.210.xx.xx
 ```
 
-Custom SSH port (bastion, security):
+Custom SSH port:
 ```bash
-frankendeploy server add prod deploy@gate.example.com --port 2222 --key ~/.ssh/id_rsa
+frankendeploy server add prod deploy@gate.example.com --port 2222
+```
+
+Specify a key explicitly:
+```bash
+frankendeploy server add prod user@host --key ~/.ssh/my_custom_key
+```
+
+Skip SSH test (useful for CI setup):
+```bash
+frankendeploy server add prod user@host --skip-test
 ```
 
 ### SSH Key Selection
 
-FrankenDeploy auto-detects keys in this order:
-1. `~/.ssh/id_ed25519`
+When testing the connection, FrankenDeploy tries keys in this order:
+1. `~/.ssh/id_ed25519` (preferred)
 2. `~/.ssh/id_rsa`
+3. Other keys in `~/.ssh/`
 
-If your server uses a different key, specify it with `--key`:
-```bash
-frankendeploy server add prod user@host --key ~/.ssh/my_custom_key
-```
+**Note:** Passphrase-protected keys are skipped during auto-detection.
 
 ## Setting Up the Server
 

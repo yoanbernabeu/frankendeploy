@@ -75,6 +75,7 @@ var (
 	serverPort    int
 	serverKeyPath string
 	setupEmail    string
+	skipSSHTest   bool
 )
 
 func init() {
@@ -87,6 +88,7 @@ func init() {
 
 	serverAddCmd.Flags().IntVarP(&serverPort, "port", "p", 22, "SSH port")
 	serverAddCmd.Flags().StringVarP(&serverKeyPath, "key", "k", "", "SSH private key path")
+	serverAddCmd.Flags().BoolVar(&skipSSHTest, "skip-test", false, "Skip SSH connection test")
 
 	serverSetupCmd.Flags().StringVarP(&setupEmail, "email", "e", "", "Email for Let's Encrypt certificates (required)")
 	_ = serverSetupCmd.MarkFlagRequired("email")
@@ -138,9 +140,130 @@ func runServerAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	PrintSuccess("Added server '%s' (%s@%s)", name, user, host)
+
+	// Skip SSH test if requested
+	if skipSSHTest {
+		PrintInfo("Skipping SSH connection test (--skip-test)")
+		printNextSteps(name)
+		return nil
+	}
+
+	// Test SSH connection and configure key if needed
+	if err := testAndConfigureSSH(name, &serverCfg, globalCfg); err != nil {
+		PrintWarning("SSH connection could not be established: %v", err)
+		PrintInfo("You can test the connection manually with: ssh %s@%s -p %d", user, host, serverCfg.Port)
+	}
+
+	printNextSteps(name)
+	return nil
+}
+
+func printNextSteps(name string) {
 	fmt.Println()
 	fmt.Println("Next step:")
 	fmt.Printf("  Run 'frankendeploy server setup %s --email your@email.com' to configure the server\n", name)
+}
+
+// testAndConfigureSSH tests the SSH connection and tries alternative keys if needed
+func testAndConfigureSSH(name string, serverCfg *config.ServerConfig, globalCfg *config.GlobalConfig) error {
+	PrintInfo("Testing SSH connection...")
+
+	// Try connection with current configuration
+	client := ssh.NewClient(serverCfg.Host, serverCfg.User, serverCfg.Port, serverCfg.KeyPath)
+	if err := client.Connect(); err == nil {
+		client.Close()
+		PrintSuccess("SSH connection successful")
+		return nil
+	}
+
+	PrintWarning("Connection failed with default key")
+
+	// Discover available SSH keys
+	keys, err := ssh.DiscoverSSHKeys()
+	if err != nil {
+		return fmt.Errorf("failed to discover SSH keys: %w", err)
+	}
+
+	// Filter out encrypted keys and already tried key
+	var availableKeys []ssh.SSHKeyInfo
+	for _, key := range keys {
+		if key.IsEncrypted {
+			PrintVerbose("Skipping encrypted key: %s", key.Name)
+			continue
+		}
+		if serverCfg.KeyPath != "" && key.Path == serverCfg.KeyPath {
+			continue
+		}
+		availableKeys = append(availableKeys, key)
+	}
+
+	if len(availableKeys) == 0 {
+		return fmt.Errorf("no SSH keys available to try")
+	}
+
+	// Try keys - either interactively or automatically
+	var workingKey *ssh.SSHKeyInfo
+	if IsInteractive() {
+		workingKey = interactiveKeySelection(serverCfg, availableKeys)
+	} else {
+		workingKey = autoTryKeys(serverCfg, availableKeys)
+	}
+
+	if workingKey == nil {
+		return fmt.Errorf("no working SSH key found")
+	}
+
+	// Update server config with working key
+	serverCfg.KeyPath = workingKey.Path
+	globalCfg.Servers[name] = *serverCfg
+
+	if err := config.SaveGlobalConfig(globalCfg); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	PrintSuccess("Updated server config with key: %s", workingKey.Path)
+	return nil
+}
+
+// interactiveKeySelection prompts the user to select an SSH key
+func interactiveKeySelection(serverCfg *config.ServerConfig, keys []ssh.SSHKeyInfo) *ssh.SSHKeyInfo {
+	options := make([]string, len(keys))
+	for i, key := range keys {
+		options[i] = fmt.Sprintf("%s (%s)", key.Name, key.Type)
+	}
+
+	fmt.Println()
+	PrintInfo("Available SSH keys:")
+	choice := PromptSelect("Select SSH key to use:", options)
+	if choice < 0 {
+		return nil
+	}
+
+	selectedKey := &keys[choice]
+	PrintInfo("Testing with %s...", selectedKey.Path)
+
+	err := ssh.TryConnect(serverCfg.Host, serverCfg.User, serverCfg.Port, selectedKey.Path)
+	if err != nil {
+		PrintError("Connection failed: %v", err)
+		return nil
+	}
+
+	PrintSuccess("Connection successful!")
+	return selectedKey
+}
+
+// autoTryKeys automatically tries available keys in order
+func autoTryKeys(serverCfg *config.ServerConfig, keys []ssh.SSHKeyInfo) *ssh.SSHKeyInfo {
+	PrintInfo("Trying available SSH keys automatically...")
+
+	for _, key := range keys {
+		PrintVerbose("Trying %s...", key.Name)
+		err := ssh.TryConnect(serverCfg.Host, serverCfg.User, serverCfg.Port, key.Path)
+		if err == nil {
+			PrintSuccess("SSH connection successful with %s", key.Name)
+			return &key
+		}
+	}
 
 	return nil
 }

@@ -58,12 +58,15 @@ frankendeploy dev restart # Restart
 Add your VPS to FrankenDeploy:
 
 ```bash
-frankendeploy server add production deploy@your-vps.com --key ~/.ssh/id_rsa
+frankendeploy server add production deploy@your-vps.com
 ```
+
+FrankenDeploy will automatically test the SSH connection and find the right key.
 
 Options:
 - `--port 2222` - Custom SSH port (default: 22)
-- `--key ~/.ssh/id_rsa` - SSH private key path
+- `--key ~/.ssh/id_rsa` - SSH private key path (auto-detected if not specified)
+- `--skip-test` - Skip SSH connection test
 
 Then set up the server (installs Docker, Caddy, etc.):
 
