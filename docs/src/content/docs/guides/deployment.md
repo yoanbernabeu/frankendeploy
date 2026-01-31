@@ -27,6 +27,30 @@ frankendeploy deploy production --tag v1.2.3
 
 By default, tags are timestamps like `20240115-143052`.
 
+### Cross-Architecture Detection
+
+FrankenDeploy automatically detects architecture mismatches between your local machine and the server. When deploying from Apple Silicon (ARM) to an x86_64 VPS, you'll see:
+
+```
+⚠️  Architecture mismatch detected:
+   Local:  arm64 (Apple Silicon)
+   Server: x86_64
+
+   Local builds will not run on this server.
+```
+
+In **interactive mode**, FrankenDeploy prompts you to enable remote build and saves your preference for future deployments.
+
+In **CI/CD mode** (`--yes`), you must explicitly use `--remote-build` or pre-configure the server:
+
+```bash
+# Configure server for remote builds
+frankendeploy server set production remote_build true
+
+# Or use the flag
+frankendeploy deploy production --remote-build --yes
+```
+
 ### Remote Build (Recommended for Apple Silicon)
 Build the Docker image directly on the server instead of locally:
 ```bash
@@ -42,6 +66,12 @@ How it works:
 1. Transfers source code via `rsync` (fast, excludes node_modules/vendor)
 2. Builds Docker image on the VPS
 3. Deploys normally
+
+### Force Local Build
+If remote build is configured but you want to build locally anyway:
+```bash
+frankendeploy deploy production --no-remote-build
+```
 
 ### Skip Build
 If you've already built the image:

@@ -81,6 +81,11 @@ func (c *Client) ExecWithOutput(command string) (string, error) {
 	return output, nil
 }
 
+// GetServerArchitecture returns the server's CPU architecture (e.g., "x86_64", "aarch64")
+func (c *Client) GetServerArchitecture() (string, error) {
+	return c.ExecWithOutput("uname -m")
+}
+
 // ExecMultiple executes multiple commands in sequence
 func (c *Client) ExecMultiple(commands []string) error {
 	for _, cmd := range commands {

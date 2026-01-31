@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -71,6 +72,21 @@ var serverRemoveCmd = &cobra.Command{
 	RunE:  runServerRemove,
 }
 
+var serverSetCmd = &cobra.Command{
+	Use:   "set <server> <key> <value>",
+	Short: "Set a server configuration value",
+	Long: `Sets a configuration value for a server.
+
+Available keys:
+  remote_build  Enable/disable remote build (true/false)
+
+Examples:
+  frankendeploy server set prod remote_build true
+  frankendeploy server set staging remote_build false`,
+	Args: cobra.ExactArgs(3),
+	RunE: runServerSet,
+}
+
 var (
 	serverPort    int
 	serverKeyPath string
@@ -85,6 +101,7 @@ func init() {
 	serverCmd.AddCommand(serverListCmd)
 	serverCmd.AddCommand(serverStatusCmd)
 	serverCmd.AddCommand(serverRemoveCmd)
+	serverCmd.AddCommand(serverSetCmd)
 
 	serverAddCmd.Flags().IntVarP(&serverPort, "port", "p", 22, "SSH port")
 	serverAddCmd.Flags().StringVarP(&serverKeyPath, "key", "k", "", "SSH private key path")
@@ -493,6 +510,9 @@ func runServerList(cmd *cobra.Command, args []string) error {
 		if server.KeyPath != "" {
 			fmt.Printf("    Key:  %s\n", server.KeyPath)
 		}
+		if server.RemoteBuild != nil {
+			fmt.Printf("    Remote Build: %v\n", *server.RemoteBuild)
+		}
 		fmt.Println()
 	}
 
@@ -657,5 +677,46 @@ func runServerRemove(cmd *cobra.Command, args []string) error {
 	}
 
 	PrintSuccess("Removed server '%s'", name)
+	return nil
+}
+
+func runServerSet(cmd *cobra.Command, args []string) error {
+	serverName := args[0]
+	key := args[1]
+	value := args[2]
+
+	// Validate server name
+	if err := security.ValidateServerName(serverName); err != nil {
+		return fmt.Errorf("invalid server name: %w", err)
+	}
+
+	globalCfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		return err
+	}
+
+	serverCfg, err := globalCfg.GetServer(serverName)
+	if err != nil {
+		return err
+	}
+
+	switch key {
+	case "remote_build":
+		boolValue, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("invalid value for remote_build: use 'true' or 'false'")
+		}
+		serverCfg.RemoteBuild = &boolValue
+
+	default:
+		return fmt.Errorf("unknown configuration key: %s\n\nAvailable keys:\n  remote_build  Enable/disable remote build (true/false)", key)
+	}
+
+	globalCfg.Servers[serverName] = *serverCfg
+	if err := config.SaveGlobalConfig(globalCfg); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	PrintSuccess("Set %s=%s for server '%s'", key, value, serverName)
 	return nil
 }
