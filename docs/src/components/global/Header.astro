@@ -99,43 +99,63 @@ const navItems = [
 </aside>
 
 <script>
-  // Header scroll effect
-  const header = document.getElementById('header');
-  const headerBg = document.getElementById('header-bg');
+  function initHeader() {
+    const headerBg = document.getElementById('header-bg');
+    const menuBtn = document.getElementById('mobile-menu-btn');
+    const closeBtn = document.getElementById('mobile-close-btn');
+    const overlay = document.getElementById('mobile-overlay');
+    const menu = document.getElementById('mobile-menu');
 
-  window.addEventListener('scroll', () => {
-    if (window.scrollY > 50) {
-      headerBg?.classList.remove('opacity-0');
-      headerBg?.classList.add('opacity-100');
-    } else {
-      headerBg?.classList.add('opacity-0');
-      headerBg?.classList.remove('opacity-100');
-    }
-  });
-
-  // Mobile menu
-  const menuBtn = document.getElementById('mobile-menu-btn');
-  const closeBtn = document.getElementById('mobile-close-btn');
-  const overlay = document.getElementById('mobile-overlay');
-  const menu = document.getElementById('mobile-menu');
-
-  function openMenu() {
-    menu?.classList.remove('-translate-x-full');
-    overlay?.classList.remove('opacity-0', 'pointer-events-none');
-    document.body.style.overflow = 'hidden';
-  }
-
-  function closeMenu() {
+    // Reset menu state on page load
     menu?.classList.add('-translate-x-full');
     overlay?.classList.add('opacity-0', 'pointer-events-none');
     document.body.style.overflow = '';
+
+    // Header scroll effect
+    function handleScroll() {
+      if (window.scrollY > 50) {
+        headerBg?.classList.remove('opacity-0');
+        headerBg?.classList.add('opacity-100');
+      } else {
+        headerBg?.classList.add('opacity-0');
+        headerBg?.classList.remove('opacity-100');
+      }
+    }
+
+    function openMenu() {
+      menu?.classList.remove('-translate-x-full');
+      overlay?.classList.remove('opacity-0', 'pointer-events-none');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeMenu() {
+      menu?.classList.add('-translate-x-full');
+      overlay?.classList.add('opacity-0', 'pointer-events-none');
+      document.body.style.overflow = '';
+    }
+
+    function handleKeydown(e: KeyboardEvent) {
+      if (e.key === 'Escape') closeMenu();
+    }
+
+    // Remove old listeners to prevent duplicates
+    window.removeEventListener('scroll', handleScroll);
+    document.removeEventListener('keydown', handleKeydown);
+
+    // Add listeners
+    window.addEventListener('scroll', handleScroll);
+    menuBtn?.addEventListener('click', openMenu);
+    closeBtn?.addEventListener('click', closeMenu);
+    overlay?.addEventListener('click', closeMenu);
+    document.addEventListener('keydown', handleKeydown);
+
+    // Initial scroll check
+    handleScroll();
   }
 
-  menuBtn?.addEventListener('click', openMenu);
-  closeBtn?.addEventListener('click', closeMenu);
-  overlay?.addEventListener('click', closeMenu);
+  // Run on initial load
+  initHeader();
 
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeMenu();
-  });
+  // Run after Astro client-side navigation
+  document.addEventListener('astro:page-load', initHeader);
 </script>

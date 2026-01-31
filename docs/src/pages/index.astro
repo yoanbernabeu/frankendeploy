@@ -50,6 +50,17 @@ import frankenbearSmile from '../asset/frankenbear_smile.png';
 
           <!-- Text content (right) -->
           <div class="text-center lg:text-left">
+            <!-- Experimental badge -->
+            <div class="animate-slide-up delay-50 mb-4" style="opacity: 0;">
+              <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider bg-gradient-to-r from-[#B3D133]/20 to-[#5C00BD]/20 border border-[#B3D133]/30 text-[#B3D133]">
+                <span class="relative flex h-2 w-2">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#B3D133] opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-2 w-2 bg-[#B3D133]"></span>
+                </span>
+                Experimental
+              </span>
+            </div>
+
             <!-- Main title -->
             <h1 class="mb-6 animate-slide-up delay-100" style="opacity: 0;">
               <span class="block text-5xl md:text-7xl lg:text-8xl font-black text-white tracking-tight">
@@ -91,6 +102,11 @@ import frankenbearSmile from '../asset/frankenbear_smile.png';
                 </span>
               ))}
             </div>
+
+            <!-- Experimental notice -->
+            <p class="text-sm text-[#C3B2D3]/60 mt-6 max-w-md animate-slide-up delay-500" style="opacity: 0;">
+              🧪 FrankenDeploy is in active development. Breaking changes may occur between versions — use with caution in production.
+            </p>
           </div>
         </div>
 
@@ -451,27 +467,31 @@ import frankenbearSmile from '../asset/frankenbear_smile.png';
 </style>
 
 <script>
-  // Scroll reveal animation
-  const observerOptions = {
-    root: null,
-    rootMargin: '0px',
-    threshold: 0.1
-  };
+  function initAnimations() {
+    // Scroll reveal animation
+    const observerOptions = {
+      root: null,
+      rootMargin: '0px',
+      threshold: 0.1
+    };
 
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        entry.target.classList.add('visible');
-      }
-    });
-  }, observerOptions);
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+        }
+      });
+    }, observerOptions);
 
-  document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+    document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
 
-  // Trigger initial animations
-  document.addEventListener('DOMContentLoaded', () => {
+    // Trigger initial animations
     document.querySelectorAll('.animate-slide-up').forEach(el => {
-      el.style.opacity = '1';
+      (el as HTMLElement).style.opacity = '1';
     });
-  });
+  }
+
+  // Run on initial load and after Astro navigation
+  initAnimations();
+  document.addEventListener('astro:page-load', initAnimations);
 </script>

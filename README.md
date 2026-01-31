@@ -22,6 +22,8 @@
 
 **Built on FrankenPHP**, the modern PHP app server by Kévin Dunglas.
 
+> ⚠️ **Experimental** — FrankenDeploy is currently in experimental phase. Breaking changes may occur between versions. Use with caution in production environments.
+
 ## Features
 
 - **Zero config** — Auto-detects PHP version, extensions, database, and assets
