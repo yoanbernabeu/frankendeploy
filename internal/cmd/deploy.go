@@ -228,6 +228,8 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Tag: %s\n", deployTag)
 	if projectCfg.Deploy.Domain != "" {
 		fmt.Printf("  URL: https://%s\n", projectCfg.Deploy.Domain)
+	} else {
+		fmt.Println("  URL: (no public domain configured)")
 	}
 
 	return nil
@@ -570,7 +572,15 @@ func rollbackDeployment(client *ssh.Client, appName, appPath string) error {
 func updateCaddyConfig(client *ssh.Client, cfg *config.ProjectConfig) error {
 	domain := cfg.Deploy.Domain
 	if domain == "" {
-		PrintWarning("No domain configured in frankendeploy.yaml (deploy.domain)")
+		fmt.Println()
+		PrintWarning("No domain configured. The application will be accessible via container network only.")
+		PrintInfo("To configure a public domain, add to frankendeploy.yaml:")
+		fmt.Println()
+		fmt.Println("   deploy:")
+		fmt.Println("       domain: your-domain.com")
+		fmt.Println()
+		PrintInfo("Or run: frankendeploy init --domain your-domain.com")
+		fmt.Println()
 		return nil
 	}
 

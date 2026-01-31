@@ -52,8 +52,8 @@ Handles everything: building, transferring, starting containers, health checks, 
 # In your Symfony project
 cd my-symfony-app
 
-# Initialize FrankenDeploy
-frankendeploy init
+# Initialize FrankenDeploy (with optional domain)
+frankendeploy init --domain my-app.com
 
 # Generate Docker files
 frankendeploy build

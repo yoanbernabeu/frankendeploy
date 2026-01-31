@@ -18,6 +18,12 @@ cd my-symfony-app
 frankendeploy init
 ```
 
+You can also specify your production domain directly:
+
+```bash
+frankendeploy init --domain my-app.com
+```
+
 FrankenDeploy will:
 - Detect your PHP version
 - Identify required extensions

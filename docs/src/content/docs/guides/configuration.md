@@ -174,6 +174,23 @@ When you run `frankendeploy init`, it automatically detects:
 | Database | `doctrine.yaml`, `.env` DATABASE_URL |
 | Assets | `package.json`, `vite.config.js`, `importmap.php` |
 
+### Init Options
+
+You can pass additional options to `frankendeploy init`:
+
+```bash
+# Set your production domain during initialization
+frankendeploy init --domain my-app.com
+
+# Overwrite existing configuration
+frankendeploy init --force
+
+# Custom project name
+frankendeploy init --name my-custom-name
+```
+
+If no domain is provided, you can add it later in `frankendeploy.yaml` under `deploy.domain`.
+
 ## Validation
 
 FrankenDeploy validates your configuration. Run:
