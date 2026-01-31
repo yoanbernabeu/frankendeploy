@@ -375,6 +375,24 @@ func deployNewVersion(client *ssh.Client, cfg *config.ProjectConfig, imageName, 
 		commands = append(commands, fmt.Sprintf("touch %s/%s", sharedPath, file))
 	}
 
+	// Execute directory creation commands first
+	for _, command := range commands {
+		PrintVerbose("Running: %s", command)
+		result, err := client.Exec(command)
+		if err != nil {
+			return fmt.Errorf("command failed: %w", err)
+		}
+		if result.ExitCode != 0 {
+			return fmt.Errorf("command failed: %s", result.Stderr)
+		}
+	}
+
+	// Fix permissions for container user 1000:1000
+	fixSharedPermissions(client, sharedPath, sharedDirs, sharedFiles)
+
+	// Build container commands
+	commands = []string{}
+
 	// Stop old container if exists
 	commands = append(commands,
 		fmt.Sprintf("docker stop %s 2>/dev/null || true", cfg.Name),
@@ -444,6 +462,41 @@ func buildVolumeMounts(sharedPath string, sharedDirs, sharedFiles []string) stri
 	}
 
 	return strings.Join(mounts, " \\\n\t\t")
+}
+
+// fixSharedPermissions ensures shared directories and files have correct ownership for container user 1000:1000
+func fixSharedPermissions(client *ssh.Client, sharedPath string, sharedDirs, sharedFiles []string) {
+	// Fix ownership of shared directory itself
+	cmd := fmt.Sprintf("sudo chown 1000:1000 %s 2>/dev/null || true", sharedPath)
+	PrintVerbose("Running: %s", cmd)
+	_, _ = client.Exec(cmd)
+
+	// Fix ownership of shared directories (recursively for contents)
+	for _, dir := range sharedDirs {
+		dirPath := fmt.Sprintf("%s/%s", sharedPath, dir)
+		cmd := fmt.Sprintf("sudo chown -R 1000:1000 %s 2>/dev/null || true", dirPath)
+		PrintVerbose("Running: %s", cmd)
+		result, _ := client.Exec(cmd)
+		if result != nil && result.ExitCode != 0 {
+			PrintWarning("Could not fix permissions for %s (may require manual sudo)", dir)
+		}
+	}
+
+	// Fix ownership and permissions of shared files
+	for _, file := range sharedFiles {
+		filePath := fmt.Sprintf("%s/%s", sharedPath, file)
+		// Set ownership
+		cmd := fmt.Sprintf("sudo chown 1000:1000 %s 2>/dev/null || true", filePath)
+		PrintVerbose("Running: %s", cmd)
+		_, _ = client.Exec(cmd)
+
+		// Set restrictive permissions for .env files (contains secrets)
+		if strings.HasPrefix(file, ".env") || strings.Contains(file, "/.env") {
+			cmd = fmt.Sprintf("sudo chmod 600 %s 2>/dev/null || true", filePath)
+			PrintVerbose("Running: %s", cmd)
+			_, _ = client.Exec(cmd)
+		}
+	}
 }
 
 func runHealthCheck(client *ssh.Client, cfg *config.ProjectConfig, appPath string) error {
