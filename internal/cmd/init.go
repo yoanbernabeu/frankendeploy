@@ -26,14 +26,16 @@ This command will:
 }
 
 var (
-	initName  string
-	initForce bool
+	initName   string
+	initForce  bool
+	initDomain string
 )
 
 func init() {
 	rootCmd.AddCommand(initCmd)
 	initCmd.Flags().StringVarP(&initName, "name", "n", "", "Project name (default: directory name)")
 	initCmd.Flags().BoolVarP(&initForce, "force", "f", false, "Overwrite existing configuration")
+	initCmd.Flags().StringVarP(&initDomain, "domain", "d", "", "Domain for the application (e.g., demo.example.com)")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
@@ -62,6 +64,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Convert scan result to config
 	cfg := s.ToProjectConfig(result, projectName)
+
+	// Apply domain if provided
+	if initDomain != "" {
+		cfg.Deploy.Domain = initDomain
+	}
 
 	// Validate configuration
 	if errors := config.ValidateProjectConfig(cfg); errors.HasErrors() {
@@ -111,6 +118,10 @@ func printInitSummary(result *config.ScanResult, cfg *config.ProjectConfig) {
 
 	if cfg.Assets.BuildTool != "" {
 		fmt.Printf("   Assets:      %s\n", cfg.Assets.BuildTool)
+	}
+
+	if cfg.Deploy.Domain != "" {
+		fmt.Printf("   Domain:      %s\n", cfg.Deploy.Domain)
 	}
 
 	fmt.Println()
