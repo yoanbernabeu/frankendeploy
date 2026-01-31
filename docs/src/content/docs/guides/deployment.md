@@ -95,6 +95,33 @@ deploy:
 **Pre-deploy hooks** run in the new container before traffic is switched.
 **Post-deploy hooks** run after successful deployment.
 
+## Database Migration Warning
+
+FrankenDeploy automatically detects when your project has Doctrine entities but no migration files. This can happen when you forget to generate migrations after creating entities.
+
+When this situation is detected (entities in `src/Entity/` but no files in `migrations/`), FrankenDeploy displays a warning:
+
+```
+⚠️  Warning: No database migrations found but entities exist!
+
+   Entities found: 5 files in src/Entity/
+   Migrations:     0 files in migrations/
+
+   This may cause 'no such table' errors at runtime.
+
+   To fix this, run locally:
+      php bin/console make:migration
+      php bin/console doctrine:migrations:migrate
+      git add migrations/
+      git commit -m "Add database migrations"
+
+   Then redeploy your application.
+```
+
+This warning only appears once per application. Once you add migrations and redeploy, the warning is automatically cleared.
+
+**Note:** This check only runs when you have a migration hook configured in your `pre_deploy` hooks.
+
 ## Release Management
 
 FrankenDeploy keeps multiple releases for instant rollback:
