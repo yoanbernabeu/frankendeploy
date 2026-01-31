@@ -183,6 +183,11 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			}
 			PrintWarning("Pre-deploy hooks failed but continuing (--force)")
 		}
+
+		// Check for empty migrations if migration hook was run
+		if deploy.HasMigrationHook(projectCfg.Deploy.Hooks.PreDeploy) {
+			checkAndWarnMigrationState(client, projectCfg.Name)
+		}
 	}
 
 	// Step 6: Health check
@@ -907,5 +912,41 @@ func handleInteractiveEnvCheck(client *ssh.Client, cfg *config.ProjectConfig, re
 
 	default: // Skip (0)
 		return fmt.Errorf("deployment cancelled by user")
+	}
+}
+
+// checkAndWarnMigrationState checks for empty migrations and warns once per app
+func checkAndWarnMigrationState(client *ssh.Client, appName string) {
+	// Check migration state inside the container
+	result, err := deploy.CheckMigrationState(client, appName)
+	if err != nil {
+		PrintVerbose("Could not check migration state: %v", err)
+		return
+	}
+
+	// If migrations now exist, clear any previous warning marker
+	if result.MigrationFilesCount > 0 {
+		_ = deploy.ClearMigrationWarningMarker(client, appName)
+		return
+	}
+
+	// No problem detected (no entities or migrations exist)
+	if !result.HasPotentialProblem {
+		return
+	}
+
+	// Check if we've already shown this warning for this app
+	if deploy.HasMigrationWarningBeenShown(client, appName) {
+		PrintVerbose("Migration warning already shown for this app")
+		return
+	}
+
+	// Show the warning
+	fmt.Println()
+	PrintWarning(deploy.FormatMigrationWarning(result))
+
+	// Mark warning as shown so we don't repeat it
+	if err := deploy.MarkMigrationWarningShown(client, appName); err != nil {
+		PrintVerbose("Could not mark migration warning as shown: %v", err)
 	}
 }
