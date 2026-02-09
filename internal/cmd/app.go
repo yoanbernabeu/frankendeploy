@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
+	"github.com/yoanbernabeu/frankendeploy/internal/constants"
 	"github.com/yoanbernabeu/frankendeploy/internal/security"
-	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
 )
 
 var appCmd = &cobra.Command{
@@ -71,32 +71,14 @@ func init() {
 func runAppList(cmd *cobra.Command, args []string) error {
 	serverName := args[0]
 
-	// Validate input
-	if err := security.ValidateServerName(serverName); err != nil {
-		return fmt.Errorf("invalid server name: %w", err)
-	}
-
-	// Load global config
-	globalCfg, err := config.LoadGlobalConfig()
+	conn, err := ConnectToServerNoProject(serverName)
 	if err != nil {
 		return err
 	}
-
-	// Get server config
-	serverCfg, err := globalCfg.GetServer(serverName)
-	if err != nil {
-		return err
-	}
-
-	// Connect to server
-	client := ssh.NewClient(serverCfg.Host, serverCfg.User, serverCfg.Port, serverCfg.KeyPath)
-	if err := client.Connect(); err != nil {
-		return fmt.Errorf("failed to connect: %w", err)
-	}
-	defer client.Close()
+	defer conn.Client.Close()
 
 	// List apps directory
-	result, err := client.Exec("ls -1 /opt/frankendeploy/apps 2>/dev/null")
+	result, err := conn.Client.Exec(fmt.Sprintf("ls -1 %s 2>/dev/null", constants.AppsDir))
 	if err != nil {
 		return fmt.Errorf("failed to list apps: %w", err)
 	}
@@ -115,14 +97,14 @@ func runAppList(cmd *cobra.Command, args []string) error {
 		}
 
 		// Get container status
-		statusResult, _ := client.Exec(fmt.Sprintf("docker ps --filter name=%s --format '{{.Status}}' 2>/dev/null", app))
+		statusResult, _ := conn.Client.Exec(fmt.Sprintf("docker ps --filter name=%s --format '{{.Status}}' 2>/dev/null", app))
 		status := strings.TrimSpace(statusResult.Stdout)
 		if status == "" {
 			status = "stopped"
 		}
 
 		// Get current release
-		releaseResult, _ := client.Exec(fmt.Sprintf("readlink /opt/frankendeploy/apps/%s/current 2>/dev/null | xargs basename", app))
+		releaseResult, _ := conn.Client.Exec(fmt.Sprintf("readlink %s/current 2>/dev/null | xargs basename", constants.AppBasePath(app)))
 		release := strings.TrimSpace(releaseResult.Stdout)
 		if release == "" {
 			release = "-"
@@ -141,24 +123,9 @@ func runAppRemove(cmd *cobra.Command, args []string) error {
 	serverName := args[0]
 	appName := args[1]
 
-	// Validate inputs
-	if err := security.ValidateServerName(serverName); err != nil {
-		return fmt.Errorf("invalid server name: %w", err)
-	}
+	// Validate app name
 	if err := security.ValidateAppName(appName); err != nil {
 		return fmt.Errorf("invalid app name: %w", err)
-	}
-
-	// Load global config
-	globalCfg, err := config.LoadGlobalConfig()
-	if err != nil {
-		return err
-	}
-
-	// Get server config
-	serverCfg, err := globalCfg.GetServer(serverName)
-	if err != nil {
-		return err
 	}
 
 	if !appRemoveForce && !IsYesMode() {
@@ -174,53 +141,72 @@ func runAppRemove(cmd *cobra.Command, args []string) error {
 
 	PrintInfo("Removing %s from %s...", appName, serverName)
 
-	// Connect to server
-	client := ssh.NewClient(serverCfg.Host, serverCfg.User, serverCfg.Port, serverCfg.KeyPath)
-	if err := client.Connect(); err != nil {
-		return fmt.Errorf("failed to connect: %w", err)
+	conn, err := ConnectToServerNoProject(serverName)
+	if err != nil {
+		return err
 	}
-	defer client.Close()
+	defer conn.Client.Close()
 
 	// Stop and remove main app container
 	PrintVerbose("Stopping app container...")
-	_, _ = client.Exec(fmt.Sprintf("docker stop %s 2>/dev/null || true", appName))
-	_, _ = client.Exec(fmt.Sprintf("docker rm %s 2>/dev/null || true", appName))
+	if _, err := conn.Client.Exec(fmt.Sprintf("docker stop %s 2>/dev/null || true", appName)); err != nil {
+		PrintVerbose("Could not stop app container: %v", err)
+	}
+	if _, err := conn.Client.Exec(fmt.Sprintf("docker rm %s 2>/dev/null || true", appName)); err != nil {
+		PrintVerbose("Could not remove app container: %v", err)
+	}
 
 	// Stop and remove worker container if exists
 	PrintVerbose("Stopping worker container...")
-	_, _ = client.Exec(fmt.Sprintf("docker stop %s-worker 2>/dev/null || true", appName))
-	_, _ = client.Exec(fmt.Sprintf("docker rm %s-worker 2>/dev/null || true", appName))
+	if _, err := conn.Client.Exec(fmt.Sprintf("docker stop %s-worker 2>/dev/null || true", appName)); err != nil {
+		PrintVerbose("Could not stop worker container: %v", err)
+	}
+	if _, err := conn.Client.Exec(fmt.Sprintf("docker rm %s-worker 2>/dev/null || true", appName)); err != nil {
+		PrintVerbose("Could not remove worker container: %v", err)
+	}
 
 	// Stop and remove database container if exists
 	PrintVerbose("Stopping database container...")
-	_, _ = client.Exec(fmt.Sprintf("docker stop %s-db 2>/dev/null || true", appName))
-	_, _ = client.Exec(fmt.Sprintf("docker rm %s-db 2>/dev/null || true", appName))
+	if _, err := conn.Client.Exec(fmt.Sprintf("docker stop %s-db 2>/dev/null || true", appName)); err != nil {
+		PrintVerbose("Could not stop db container: %v", err)
+	}
+	if _, err := conn.Client.Exec(fmt.Sprintf("docker rm %s-db 2>/dev/null || true", appName)); err != nil {
+		PrintVerbose("Could not remove db container: %v", err)
+	}
 
 	// Remove volumes unless --keep-data is specified
 	if !appRemoveKeepData {
 		PrintVerbose("Removing data volumes...")
-		// Remove database volume
-		_, _ = client.Exec(fmt.Sprintf("docker volume rm %s-db-data 2>/dev/null || true", appName))
-		// Remove any app-specific volumes
-		_, _ = client.Exec(fmt.Sprintf("docker volume ls -q -f name=%s | xargs -r docker volume rm 2>/dev/null || true", appName))
+		if _, err := conn.Client.Exec(fmt.Sprintf("docker volume rm %s-db-data 2>/dev/null || true", appName)); err != nil {
+			PrintVerbose("Could not remove db volume: %v", err)
+		}
+		if _, err := conn.Client.Exec(fmt.Sprintf("docker volume ls -q -f name=%s | xargs -r docker volume rm 2>/dev/null || true", appName)); err != nil {
+			PrintVerbose("Could not remove app volumes: %v", err)
+		}
 	} else {
 		PrintInfo("Keeping data volumes (use 'docker volume rm %s-db-data' to remove manually)", appName)
 	}
 
 	// Remove app directory
-	result, err := client.Exec(fmt.Sprintf("rm -rf /opt/frankendeploy/apps/%s", appName))
+	result, err := conn.Client.Exec(fmt.Sprintf("rm -rf %s", constants.AppBasePath(appName)))
 	if err != nil || result.ExitCode != 0 {
 		return fmt.Errorf("failed to remove app directory: %s", result.Stderr)
 	}
 
 	// Remove Caddy config
-	_, _ = client.Exec(fmt.Sprintf("rm -f /opt/frankendeploy/caddy/apps/%s.caddy", appName))
+	if _, err := conn.Client.Exec(fmt.Sprintf("rm -f %s", constants.CaddyAppConfig(appName))); err != nil {
+		PrintVerbose("Could not remove Caddy config: %v", err)
+	}
 
 	// Reload Caddy
-	_, _ = client.Exec("docker exec caddy caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || true")
+	if _, err := conn.Client.Exec("docker exec caddy caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || true"); err != nil {
+		PrintVerbose("Could not reload Caddy: %v", err)
+	}
 
 	// Remove Docker images
-	_, _ = client.Exec(fmt.Sprintf("docker images %s -q | xargs -r docker rmi 2>/dev/null || true", appName))
+	if _, err := conn.Client.Exec(fmt.Sprintf("docker images %s -q | xargs -r docker rmi 2>/dev/null || true", appName)); err != nil {
+		PrintVerbose("Could not remove Docker images: %v", err)
+	}
 
 	if appRemoveKeepData {
 		PrintSuccess("Removed application '%s' (data volumes preserved)", appName)
@@ -234,16 +220,10 @@ func runAppRemove(cmd *cobra.Command, args []string) error {
 func runAppStatus(cmd *cobra.Command, args []string) error {
 	serverName := args[0]
 
-	// Validate server name
-	if err := security.ValidateServerName(serverName); err != nil {
-		return fmt.Errorf("invalid server name: %w", err)
-	}
-
-	// Load project config or use arg
+	// Determine app name
 	var appName string
 	if len(args) > 1 {
 		appName = args[1]
-		// Validate app name from argument
 		if err := security.ValidateAppName(appName); err != nil {
 			return fmt.Errorf("invalid app name: %w", err)
 		}
@@ -255,30 +235,19 @@ func runAppStatus(cmd *cobra.Command, args []string) error {
 		appName = projectCfg.Name
 	}
 
-	// Load global config
-	globalCfg, err := config.LoadGlobalConfig()
+	conn, err := ConnectToServerNoProject(serverName)
 	if err != nil {
 		return err
 	}
+	defer conn.Client.Close()
 
-	// Get server config
-	serverCfg, err := globalCfg.GetServer(serverName)
-	if err != nil {
-		return err
-	}
-
-	// Connect to server
-	client := ssh.NewClient(serverCfg.Host, serverCfg.User, serverCfg.Port, serverCfg.KeyPath)
-	if err := client.Connect(); err != nil {
-		return fmt.Errorf("failed to connect: %w", err)
-	}
-	defer client.Close()
+	appPath := constants.AppBasePath(appName)
 
 	fmt.Printf("Application: %s\n", appName)
 	fmt.Printf("Server:      %s\n\n", serverName)
 
 	// Container status
-	result, _ := client.Exec(fmt.Sprintf("docker inspect %s --format '{{.State.Status}}' 2>/dev/null", appName))
+	result, _ := conn.Client.Exec(fmt.Sprintf("docker inspect %s --format '{{.State.Status}}' 2>/dev/null", appName))
 	status := strings.TrimSpace(result.Stdout)
 	if status == "" {
 		status = "not deployed"
@@ -286,7 +255,7 @@ func runAppStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Status:      %s\n", status)
 
 	// Current release
-	result, _ = client.Exec(fmt.Sprintf("readlink /opt/frankendeploy/apps/%s/current 2>/dev/null | xargs basename", appName))
+	result, _ = conn.Client.Exec(fmt.Sprintf("readlink %s/current 2>/dev/null | xargs basename", appPath))
 	release := strings.TrimSpace(result.Stdout)
 	if release != "" {
 		fmt.Printf("Release:     %s\n", release)
@@ -294,7 +263,7 @@ func runAppStatus(cmd *cobra.Command, args []string) error {
 
 	// Uptime
 	if status == "running" {
-		result, _ = client.Exec(fmt.Sprintf("docker inspect %s --format '{{.State.StartedAt}}' 2>/dev/null", appName))
+		result, _ = conn.Client.Exec(fmt.Sprintf("docker inspect %s --format '{{.State.StartedAt}}' 2>/dev/null", appName))
 		startedAt := strings.TrimSpace(result.Stdout)
 		if startedAt != "" {
 			fmt.Printf("Started:     %s\n", startedAt)
@@ -302,7 +271,7 @@ func runAppStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Available releases
-	result, _ = client.Exec(fmt.Sprintf("ls -1t /opt/frankendeploy/apps/%s/releases 2>/dev/null | head -5", appName))
+	result, _ = conn.Client.Exec(fmt.Sprintf("ls -1t %s/releases 2>/dev/null | head -5", appPath))
 	releases := strings.TrimSpace(result.Stdout)
 	if releases != "" {
 		fmt.Println("\nRecent releases:")

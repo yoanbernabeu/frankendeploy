@@ -5,9 +5,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/yoanbernabeu/frankendeploy/internal/config"
 	"github.com/yoanbernabeu/frankendeploy/internal/security"
-	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
 )
 
 var execCmd = &cobra.Command{
@@ -38,11 +36,6 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid command: %w", err)
 	}
 
-	// Validate server name
-	if err := security.ValidateServerName(serverName); err != nil {
-		return fmt.Errorf("invalid server name: %w", err)
-	}
-
 	// Validate user if provided
 	if execUser != "" {
 		if err := security.ValidateUnixUser(execUser); err != nil {
@@ -50,38 +43,19 @@ func runExec(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Load project config
-	projectCfg, err := config.LoadProjectConfig(GetConfigFile())
+	conn, err := ConnectToServer(serverName)
 	if err != nil {
 		return err
 	}
-
-	// Load global config
-	globalCfg, err := config.LoadGlobalConfig()
-	if err != nil {
-		return err
-	}
-
-	// Get server config
-	serverCfg, err := globalCfg.GetServer(serverName)
-	if err != nil {
-		return err
-	}
-
-	// Connect to server
-	client := ssh.NewClient(serverCfg.Host, serverCfg.User, serverCfg.Port, serverCfg.KeyPath)
-	if err := client.Connect(); err != nil {
-		return fmt.Errorf("failed to connect: %w", err)
-	}
-	defer client.Close()
+	defer conn.Client.Close()
 
 	// Build docker exec command
 	dockerExec := "docker exec"
 	if execUser != "" {
 		dockerExec += fmt.Sprintf(" -u %s", execUser)
 	}
-	dockerExec += fmt.Sprintf(" %s %s", projectCfg.Name, command)
+	dockerExec += fmt.Sprintf(" %s %s", conn.Project.Name, command)
 
 	// Execute and stream output
-	return client.ExecStream(dockerExec)
+	return conn.Client.ExecStream(dockerExec)
 }

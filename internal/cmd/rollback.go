@@ -2,13 +2,11 @@ package cmd
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/yoanbernabeu/frankendeploy/internal/config"
+	"github.com/yoanbernabeu/frankendeploy/internal/constants"
 	"github.com/yoanbernabeu/frankendeploy/internal/security"
-	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
 )
 
 var rollbackCmd = &cobra.Command{
@@ -36,51 +34,30 @@ func runRollback(cmd *cobra.Command, args []string) error {
 		targetRelease = args[1]
 	}
 
-	// Validate inputs
-	if err := security.ValidateServerName(serverName); err != nil {
-		return fmt.Errorf("invalid server name: %w", err)
-	}
+	// Validate release name if provided
 	if targetRelease != "" {
 		if err := security.ValidateRelease(targetRelease); err != nil {
 			return fmt.Errorf("invalid release name: %w", err)
 		}
 	}
 
-	// Load project config
-	projectCfg, err := config.LoadProjectConfig(GetConfigFile())
+	conn, err := ConnectToServer(serverName)
 	if err != nil {
 		return err
 	}
+	defer conn.Client.Close()
 
-	// Load global config
-	globalCfg, err := config.LoadGlobalConfig()
-	if err != nil {
-		return err
-	}
+	appPath := constants.AppBasePath(conn.Project.Name)
 
-	// Get server config
-	serverCfg, err := globalCfg.GetServer(serverName)
-	if err != nil {
-		return err
-	}
-
-	appPath := filepath.Join("/opt/frankendeploy/apps", projectCfg.Name)
-
-	PrintInfo("Connecting to %s...", serverCfg.Host)
-
-	client := ssh.NewClient(serverCfg.Host, serverCfg.User, serverCfg.Port, serverCfg.KeyPath)
-	if err := client.Connect(); err != nil {
-		return fmt.Errorf("failed to connect: %w", err)
-	}
-	defer client.Close()
+	PrintInfo("Connecting to %s...", conn.Server.Host)
 
 	// Get current release
-	result, _ := client.Exec(fmt.Sprintf("readlink %s/current | xargs basename", appPath))
+	result, _ := conn.Client.Exec(fmt.Sprintf("readlink %s/current | xargs basename", appPath))
 	currentRelease := strings.TrimSpace(result.Stdout)
 
 	if targetRelease == "" {
 		// Get previous release
-		result, err := client.Exec(fmt.Sprintf("ls -1t %s/releases | head -2 | tail -1", appPath))
+		result, err := conn.Client.Exec(fmt.Sprintf("ls -1t %s/releases | head -2 | tail -1", appPath))
 		if err != nil {
 			return fmt.Errorf("failed to get releases: %w", err)
 		}
@@ -92,43 +69,52 @@ func runRollback(cmd *cobra.Command, args []string) error {
 	}
 
 	// Verify target release exists
-	releasePath := filepath.Join(appPath, "releases", targetRelease)
-	result, _ = client.Exec(fmt.Sprintf("test -d %s && echo 'exists'", releasePath))
+	releasePath := constants.AppReleasePath(conn.Project.Name, targetRelease)
+	result, _ = conn.Client.Exec(fmt.Sprintf("test -d %s && echo 'exists'", releasePath))
 	if !strings.Contains(result.Stdout, "exists") {
 		// List available releases
-		result, _ = client.Exec(fmt.Sprintf("ls -1t %s/releases", appPath))
+		result, _ = conn.Client.Exec(fmt.Sprintf("ls -1t %s/releases", appPath))
 		return fmt.Errorf("release '%s' not found. Available releases:\n%s", targetRelease, result.Stdout)
 	}
 
 	PrintInfo("Rolling back from %s to %s...", currentRelease, targetRelease)
 
-	// Stop current container
-	_, _ = client.Exec(fmt.Sprintf("docker stop %s 2>/dev/null || true", projectCfg.Name))
-	_, _ = client.Exec(fmt.Sprintf("docker rm %s 2>/dev/null || true", projectCfg.Name))
+	// Blue-green rollback: start new container first, then stop old
+	imageName := fmt.Sprintf("%s:%s", conn.Project.Name, targetRelease)
+	tempName := conn.Project.Name + "-rollback"
 
-	// Find the image for the target release
-	imageName := fmt.Sprintf("%s:%s", projectCfg.Name, targetRelease)
-
-	// Start the old container with shared .env.local mounted
-	// SECURITY: Run as non-root user (1000:1000) with non-privileged port 8080
+	// Start the target release container with a temporary name
 	startCmd := fmt.Sprintf(`docker run -d --name %s \
-		--network frankendeploy \
+		--network %s \
 		--restart unless-stopped \
-		--user 1000:1000 \
-		-e SERVER_NAME=:8080 \
+		--user %s \
+		-e SERVER_NAME=:%s \
 		-e APP_ENV=prod \
 		-e APP_DEBUG=0 \
 		-v %s/shared/.env.local:/app/.env.local:ro \
-		%s`, projectCfg.Name, appPath, imageName)
+		%s`, tempName, constants.NetworkName, constants.ContainerUser, constants.AppPort, appPath, imageName)
 
-	result, err = client.Exec(startCmd)
+	result, err = conn.Client.Exec(startCmd)
 	if err != nil || result.ExitCode != 0 {
 		return fmt.Errorf("failed to start container: %s", result.Stderr)
 	}
 
+	// Stop old container and rename new one
+	if _, err := conn.Client.Exec(fmt.Sprintf("docker stop %s 2>/dev/null || true", conn.Project.Name)); err != nil {
+		PrintWarning("Failed to stop old container: %v", err)
+	}
+	if _, err := conn.Client.Exec(fmt.Sprintf("docker rm %s 2>/dev/null || true", conn.Project.Name)); err != nil {
+		PrintWarning("Failed to remove old container: %v", err)
+	}
+	if _, err := conn.Client.Exec(fmt.Sprintf("docker rename %s %s", tempName, conn.Project.Name)); err != nil {
+		PrintWarning("Failed to rename container: %v", err)
+	}
+
 	// Update current symlink
-	currentPath := filepath.Join(appPath, "current")
-	_, _ = client.Exec(fmt.Sprintf("ln -sfn %s %s", releasePath, currentPath))
+	currentPath := constants.AppCurrentPath(conn.Project.Name)
+	if _, err := conn.Client.Exec(fmt.Sprintf("ln -sfn %s %s", releasePath, currentPath)); err != nil {
+		PrintWarning("Failed to update symlink: %v", err)
+	}
 
 	PrintSuccess("Rolled back to release %s", targetRelease)
 

@@ -30,7 +30,7 @@ func init() {
 	rootCmd.AddCommand(buildCmd)
 	buildCmd.Flags().BoolVar(&buildDockerfile, "dockerfile", false, "Generate only Dockerfile")
 	buildCmd.Flags().BoolVar(&buildCompose, "compose", false, "Generate only docker-compose files")
-	buildCmd.Flags().BoolVar(&buildAll, "all", true, "Generate all files (default)")
+	buildCmd.Flags().BoolVar(&buildAll, "all", false, "Generate all files")
 }
 
 func runBuild(cmd *cobra.Command, args []string) error {

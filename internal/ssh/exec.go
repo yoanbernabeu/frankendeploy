@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -176,9 +177,18 @@ func (c *Client) StreamOutput(command string, prefix string, out io.Writer) erro
 		return fmt.Errorf("failed to start command: %w", err)
 	}
 
-	// Stream output with prefix
-	go streamWithPrefix(stdout, out, prefix)
-	go streamWithPrefix(stderr, out, prefix)
+	// Stream output with prefix, using WaitGroup to avoid goroutine leak
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		streamWithPrefix(stdout, out, prefix)
+	}()
+	go func() {
+		defer wg.Done()
+		streamWithPrefix(stderr, out, prefix)
+	}()
+	wg.Wait()
 
 	return session.Wait()
 }

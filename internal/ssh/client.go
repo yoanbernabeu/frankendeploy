@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -10,6 +11,61 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
+// SSH client defaults
+const (
+	DefaultTimeout      = 30 * time.Second
+	DefaultMaxRetries   = 3
+	DefaultInitialDelay = 1 * time.Second
+	DefaultMaxDelay     = 10 * time.Second
+)
+
+// ClientOption is a functional option for configuring the SSH client.
+type ClientOption func(*clientOptions)
+
+type clientOptions struct {
+	timeout      time.Duration
+	maxRetries   int
+	initialDelay time.Duration
+	maxDelay     time.Duration
+}
+
+func defaultOptions() clientOptions {
+	return clientOptions{
+		timeout:      DefaultTimeout,
+		maxRetries:   DefaultMaxRetries,
+		initialDelay: DefaultInitialDelay,
+		maxDelay:     DefaultMaxDelay,
+	}
+}
+
+// WithTimeout sets the SSH connection timeout.
+func WithTimeout(d time.Duration) ClientOption {
+	return func(o *clientOptions) {
+		o.timeout = d
+	}
+}
+
+// WithRetries sets the maximum number of connection retries.
+func WithRetries(n int) ClientOption {
+	return func(o *clientOptions) {
+		o.maxRetries = n
+	}
+}
+
+// WithInitialDelay sets the initial delay between retries.
+func WithInitialDelay(d time.Duration) ClientOption {
+	return func(o *clientOptions) {
+		o.initialDelay = d
+	}
+}
+
+// WithMaxDelay sets the maximum delay between retries.
+func WithMaxDelay(d time.Duration) ClientOption {
+	return func(o *clientOptions) {
+		o.maxDelay = d
+	}
+}
+
 // Client represents an SSH client connection
 type Client struct {
 	Host    string
@@ -17,22 +73,31 @@ type Client struct {
 	Port    int
 	KeyPath string
 	client  *ssh.Client
+	opts    clientOptions
+	// sshConfig is stored to allow reconnection without reloading keys
+	sshConfig *ssh.ClientConfig
 }
 
-// NewClient creates a new SSH client
-func NewClient(host, user string, port int, keyPath string) *Client {
+// NewClient creates a new SSH client.
+// Accepts optional ClientOption arguments for configuration (backward compatible).
+func NewClient(host, user string, port int, keyPath string, opts ...ClientOption) *Client {
 	if port == 0 {
 		port = 22
+	}
+	o := defaultOptions()
+	for _, opt := range opts {
+		opt(&o)
 	}
 	return &Client{
 		Host:    host,
 		User:    user,
 		Port:    port,
 		KeyPath: keyPath,
+		opts:    o,
 	}
 }
 
-// Connect establishes an SSH connection
+// Connect establishes an SSH connection with retry and exponential backoff.
 func (c *Client) Connect() error {
 	signer, err := c.loadPrivateKey()
 	if err != nil {
@@ -44,23 +109,47 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("host key verification failed: %w", err)
 	}
 
-	config := &ssh.ClientConfig{
+	c.sshConfig = &ssh.ClientConfig{
 		User: c.User,
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(signer),
 		},
 		HostKeyCallback: hostKeyCallback,
-		Timeout:         30 * time.Second,
+		Timeout:         c.opts.timeout,
 	}
 
+	return c.connectWithRetry()
+}
+
+// connectWithRetry attempts to connect with exponential backoff.
+func (c *Client) connectWithRetry() error {
 	addr := fmt.Sprintf("%s:%d", c.Host, c.Port)
-	client, err := ssh.Dial("tcp", addr, config)
-	if err != nil {
-		return fmt.Errorf("failed to connect to %s: %w", addr, err)
+	var lastErr error
+
+	for attempt := 0; attempt < c.opts.maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := c.backoffDelay(attempt)
+			time.Sleep(delay)
+		}
+
+		client, err := ssh.Dial("tcp", addr, c.sshConfig)
+		if err == nil {
+			c.client = client
+			return nil
+		}
+		lastErr = err
 	}
 
-	c.client = client
-	return nil
+	return fmt.Errorf("failed to connect to %s after %d attempts: %w", addr, c.opts.maxRetries, lastErr)
+}
+
+// backoffDelay returns the delay for the given retry attempt using exponential backoff.
+func (c *Client) backoffDelay(attempt int) time.Duration {
+	delay := time.Duration(float64(c.opts.initialDelay) * math.Pow(2, float64(attempt-1)))
+	if delay > c.opts.maxDelay {
+		delay = c.opts.maxDelay
+	}
+	return delay
 }
 
 // Close closes the SSH connection
@@ -71,9 +160,27 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// IsConnected returns true if the client is connected
+// IsConnected checks if the client has an active connection by sending a keepalive request.
 func (c *Client) IsConnected() bool {
-	return c.client != nil
+	if c.client == nil {
+		return false
+	}
+	_, _, err := c.client.SendRequest("keepalive@frankendeploy", true, nil)
+	return err == nil
+}
+
+// Reconnect closes the existing connection and establishes a new one.
+// Requires that Connect() was called previously (sshConfig is stored).
+func (c *Client) Reconnect() error {
+	if c.sshConfig == nil {
+		return fmt.Errorf("cannot reconnect: no previous connection configuration")
+	}
+	// Close existing connection if any
+	if c.client != nil {
+		c.client.Close()
+		c.client = nil
+	}
+	return c.connectWithRetry()
 }
 
 // loadPrivateKey loads the SSH private key
@@ -186,10 +293,25 @@ func (c *Client) GetClient() *ssh.Client {
 	return c.client
 }
 
-// NewSession creates a new SSH session
+// NewSession creates a new SSH session.
+// If the session creation fails, it attempts to reconnect once and retry.
 func (c *Client) NewSession() (*ssh.Session, error) {
 	if c.client == nil {
 		return nil, fmt.Errorf("not connected")
 	}
-	return c.client.NewSession()
+
+	session, err := c.client.NewSession()
+	if err == nil {
+		return session, nil
+	}
+
+	// Attempt auto-reconnect once
+	if c.sshConfig != nil {
+		if reconnErr := c.Reconnect(); reconnErr != nil {
+			return nil, fmt.Errorf("session failed and reconnect failed: %w (original: %v)", reconnErr, err)
+		}
+		return c.client.NewSession()
+	}
+
+	return nil, fmt.Errorf("failed to create session: %w", err)
 }

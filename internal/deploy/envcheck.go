@@ -143,7 +143,9 @@ func SaveGeneratedSecrets(client *ssh.Client, appName string, secrets map[string
 
 	// Ensure directory exists
 	mkdirCmd := fmt.Sprintf("mkdir -p $(dirname %s)", envFile)
-	_, _ = client.Exec(mkdirCmd)
+	if _, err := client.Exec(mkdirCmd); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
 
 	// Read existing env file
 	result, _ := client.Exec(fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
@@ -156,15 +158,24 @@ func SaveGeneratedSecrets(client *ssh.Client, appName string, secrets map[string
 
 	// Write back
 	newContent := buildEnvContent(existingVars)
-	delim := security.GenerateHeredocDelimiter("ENVEOF")
+	delim, err := security.GenerateHeredocDelimiter("ENVEOF")
+	if err != nil {
+		return fmt.Errorf("failed to generate delimiter: %w", err)
+	}
 	writeCmd := fmt.Sprintf("cat > %s << '%s'\n%s%s", envFile, delim, newContent, delim)
 	if _, err := client.Exec(writeCmd); err != nil {
 		return fmt.Errorf("failed to write env file: %w", err)
 	}
 
-	// Fix permissions for container user 1000:1000
-	_, _ = client.Exec(fmt.Sprintf("sudo chown 1000:1000 %s 2>/dev/null || true", envFile))
-	_, _ = client.Exec(fmt.Sprintf("sudo chmod 600 %s 2>/dev/null || true", envFile))
+	// Fix permissions for container user
+	if _, err := client.Exec(fmt.Sprintf("sudo chown 1000:1000 %s 2>/dev/null || true", envFile)); err != nil {
+		// Non-critical: permissions may need manual fix
+		_ = err
+	}
+	if _, err := client.Exec(fmt.Sprintf("sudo chmod 600 %s 2>/dev/null || true", envFile)); err != nil {
+		// Non-critical: permissions may need manual fix
+		_ = err
+	}
 
 	return nil
 }

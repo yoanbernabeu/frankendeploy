@@ -123,9 +123,13 @@ func ReloadCommandsFallback() []string {
 	}
 }
 
-// WriteAppConfigCommands returns SSH commands to write app config and reload
-func WriteAppConfigCommands(appName, configContent string) []string {
-	delim := security.GenerateHeredocDelimiter("CADDYEOF")
+// WriteAppConfigCommands returns SSH commands to write app config and reload.
+// Returns an error if the heredoc delimiter cannot be generated.
+func WriteAppConfigCommands(appName, configContent string) ([]string, error) {
+	delim, err := security.GenerateHeredocDelimiter("CADDYEOF")
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate delimiter: %w", err)
+	}
 	return []string{
 		// Ensure directory exists
 		`mkdir -p /opt/frankendeploy/caddy/apps`,
@@ -133,7 +137,7 @@ func WriteAppConfigCommands(appName, configContent string) []string {
 		fmt.Sprintf("cat > /opt/frankendeploy/caddy/apps/%s.caddy << '%s'\n%s\n%s", appName, delim, configContent, delim),
 		// Reload Caddy inside container
 		`docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile`,
-	}
+	}, nil
 }
 
 // RemoveAppConfigCommands returns SSH commands to remove app config and reload

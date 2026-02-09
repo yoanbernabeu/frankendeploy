@@ -50,7 +50,10 @@ func (c *Client) UploadFile(localPath, remotePath string) error {
 		defer stdin.Close()
 		// SCP protocol: C<mode> <size> <filename>\n<data>\0
 		fmt.Fprintf(stdin, "C0644 %d %s\n", fileInfo.Size(), filename)
-		_, _ = io.Copy(stdin, localFile)
+		if _, err := io.Copy(stdin, localFile); err != nil {
+			// Log but don't return error - session.Run() will catch the failure
+			fmt.Fprintf(os.Stderr, "warning: io.Copy error during SCP upload: %v\n", err)
+		}
 		fmt.Fprint(stdin, "\x00")
 	}()
 

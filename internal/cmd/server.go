@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/frankendeploy/internal/caddy"
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
+	"github.com/yoanbernabeu/frankendeploy/internal/constants"
 	"github.com/yoanbernabeu/frankendeploy/internal/security"
 	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
 )
@@ -288,33 +289,14 @@ func autoTryKeys(serverCfg *config.ServerConfig, keys []ssh.SSHKeyInfo) *ssh.SSH
 func runServerSetup(cmd *cobra.Command, args []string) error {
 	name := args[0]
 
-	// Validate server name
-	if err := security.ValidateServerName(name); err != nil {
-		return fmt.Errorf("invalid server name: %w", err)
-	}
-
-	// Load global config
-	globalCfg, err := config.LoadGlobalConfig()
+	conn, err := ConnectToServerNoProject(name)
 	if err != nil {
 		return err
 	}
+	defer conn.Client.Close()
+	client := conn.Client
 
-	// Get server
-	serverCfg, err := globalCfg.GetServer(name)
-	if err != nil {
-		return err
-	}
-
-	PrintInfo("Connecting to %s...", serverCfg.Host)
-
-	// Connect via SSH
-	client := ssh.NewClient(serverCfg.Host, serverCfg.User, serverCfg.Port, serverCfg.KeyPath)
-	if err := client.Connect(); err != nil {
-		return fmt.Errorf("failed to connect: %w", err)
-	}
-	defer client.Close()
-
-	PrintSuccess("Connected to %s", serverCfg.Host)
+	PrintSuccess("Connected to %s", conn.Server.Host)
 	PrintInfo("Setting up server for FrankenDeploy...")
 
 	// Step 1: System update and prerequisites
@@ -356,7 +338,9 @@ findtime = 600
 		PrintWarning("Failed to configure Fail2ban jail: %v", err)
 	} else {
 		// Restart Fail2ban to apply configuration
-		_, _ = client.Exec("sudo systemctl restart fail2ban")
+		if _, err := client.Exec("sudo systemctl restart fail2ban"); err != nil {
+			PrintWarning("Could not restart Fail2ban: %v", err)
+		}
 	}
 
 	// Step 3: Install Docker
@@ -378,12 +362,12 @@ findtime = 600
 	PrintInfo("[4/5] Configuring FrankenDeploy...")
 	structureCommands := []string{
 		// Create directory structure
-		"sudo mkdir -p /opt/frankendeploy/apps",
-		"sudo mkdir -p /opt/frankendeploy/caddy/apps",
-		"sudo mkdir -p /opt/frankendeploy/caddy/logs",
-		"sudo chown -R $USER:$USER /opt/frankendeploy",
+		fmt.Sprintf("sudo mkdir -p %s", constants.AppsDir),
+		fmt.Sprintf("sudo mkdir -p %s/apps", constants.CaddyDir),
+		fmt.Sprintf("sudo mkdir -p %s/logs", constants.CaddyDir),
+		fmt.Sprintf("sudo chown -R $USER:$USER %s", constants.BasePath),
 		// Create Docker network for apps
-		"docker network create frankendeploy 2>/dev/null || true",
+		fmt.Sprintf("docker network create %s 2>/dev/null || true", constants.NetworkName),
 	}
 	if err := runCommandsWithProgress(client, structureCommands); err != nil {
 		return err
@@ -397,15 +381,15 @@ findtime = 600
 	}
 
 	// Upload Caddyfile
-	uploadCaddyCmd := fmt.Sprintf(`cat > /opt/frankendeploy/caddy/Caddyfile << 'CADDYEOF'
+	uploadCaddyCmd := fmt.Sprintf(`cat > %s/Caddyfile << 'CADDYEOF'
 %s
-CADDYEOF`, mainConfig)
+CADDYEOF`, constants.CaddyDir, mainConfig)
 	if _, err := client.Exec(uploadCaddyCmd); err != nil {
 		return fmt.Errorf("failed to upload Caddyfile: %w", err)
 	}
 
 	// Create empty placeholder for apps import
-	if _, err := client.Exec("touch /opt/frankendeploy/caddy/apps/.keep"); err != nil {
+	if _, err := client.Exec(fmt.Sprintf("touch %s/apps/.keep", constants.CaddyDir)); err != nil {
 		return fmt.Errorf("failed to create apps directory: %w", err)
 	}
 
@@ -425,19 +409,19 @@ CADDYEOF`, mainConfig)
 	// Start Caddy container with Admin API exposed on localhost only
 	// Note: Admin API on 2019 is NOT exposed to host - only accessible inside container
 	// We use docker exec to reload config
-	caddyContainerCmd := `docker rm -f caddy 2>/dev/null || true && docker run -d \
+	caddyContainerCmd := fmt.Sprintf(`docker rm -f caddy 2>/dev/null || true && docker run -d \
 		--name caddy \
-		--network frankendeploy \
+		--network %s \
 		--restart unless-stopped \
 		-p 80:80 \
 		-p 443:443 \
 		-p 443:443/udp \
-		-v /opt/frankendeploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \
-		-v /opt/frankendeploy/caddy/apps:/config/apps:ro \
-		-v /opt/frankendeploy/caddy/logs:/config/logs \
+		-v %s/Caddyfile:/etc/caddy/Caddyfile:ro \
+		-v %s/apps:/config/apps:ro \
+		-v %s/logs:/config/logs \
 		-v caddy_data:/data \
 		-v caddy_config:/config/caddy \
-		caddy:alpine`
+		caddy:alpine`, constants.NetworkName, constants.CaddyDir, constants.CaddyDir, constants.CaddyDir)
 
 	result, err := client.Exec(caddyContainerCmd)
 	if err != nil {
@@ -448,8 +432,8 @@ CADDYEOF`, mainConfig)
 	}
 
 	// Verify Caddy is running
-	result, _ = client.Exec("docker ps --filter name=caddy --format '{{.Status}}'")
-	if strings.Contains(result.Stdout, "Up") {
+	result, err = client.Exec("docker ps --filter name=caddy --format '{{.Status}}'")
+	if err == nil && strings.Contains(result.Stdout, "Up") {
 		PrintSuccess("Caddy container is running")
 	} else {
 		PrintWarning("Caddy container may not be running properly")
@@ -522,63 +506,51 @@ func runServerList(cmd *cobra.Command, args []string) error {
 func runServerStatus(cmd *cobra.Command, args []string) error {
 	name := args[0]
 
-	// Validate server name
-	if err := security.ValidateServerName(name); err != nil {
-		return fmt.Errorf("invalid server name: %w", err)
-	}
-
-	globalCfg, err := config.LoadGlobalConfig()
+	conn, err := ConnectToServerNoProject(name)
 	if err != nil {
-		return err
-	}
-
-	serverCfg, err := globalCfg.GetServer(name)
-	if err != nil {
-		return err
-	}
-
-	PrintInfo("Checking server '%s'...", name)
-
-	client := ssh.NewClient(serverCfg.Host, serverCfg.User, serverCfg.Port, serverCfg.KeyPath)
-	if err := client.Connect(); err != nil {
 		PrintError("Connection failed: %v", err)
 		return nil
 	}
-	defer client.Close()
+	defer conn.Client.Close()
+	client := conn.Client
 
 	PrintSuccess("Connection: OK")
 
 	// Check Docker
-	result, _ := client.Exec("docker --version")
-	if result.ExitCode == 0 {
+	result, err := client.Exec("docker --version")
+	if err == nil && result.ExitCode == 0 {
 		PrintSuccess("Docker: %s", strings.TrimSpace(result.Stdout))
 	} else {
 		PrintWarning("Docker: Not installed")
 	}
 
 	// Check FrankenDeploy directory
-	result, _ = client.Exec("test -d /opt/frankendeploy && echo 'exists'")
-	if strings.Contains(result.Stdout, "exists") {
+	result, err = client.Exec(fmt.Sprintf("test -d %s && echo 'exists'", constants.BasePath))
+	if err == nil && strings.Contains(result.Stdout, "exists") {
 		PrintSuccess("FrankenDeploy: Configured")
 	} else {
 		PrintWarning("FrankenDeploy: Not configured (run 'frankendeploy server setup %s')", name)
 	}
 
 	// Check Caddy container
-	result, _ = client.Exec("docker ps --filter name=caddy --format '{{.Status}}'")
-	caddyStatus := strings.TrimSpace(result.Stdout)
-	if strings.Contains(caddyStatus, "Up") {
-		PrintSuccess("Caddy: %s (Docker)", caddyStatus)
+	result, err = client.Exec("docker ps --filter name=caddy --format '{{.Status}}'")
+	if err == nil {
+		caddyStatus := strings.TrimSpace(result.Stdout)
+		if strings.Contains(caddyStatus, "Up") {
+			PrintSuccess("Caddy: %s (Docker)", caddyStatus)
+		} else {
+			PrintWarning("Caddy: Not running")
+		}
 	} else {
-		PrintWarning("Caddy: Not running")
+		PrintWarning("Could not check Caddy status: %v", err)
 	}
 
 	// Check Docker network
-	result, _ = client.Exec("docker network inspect frankendeploy --format '{{.Name}}' 2>/dev/null")
-	if strings.Contains(result.Stdout, "frankendeploy") {
-		PrintSuccess("Docker network: frankendeploy")
+	result, err = client.Exec(fmt.Sprintf("docker network inspect %s --format '{{.Name}}' 2>/dev/null", constants.NetworkName))
+	if err == nil && strings.Contains(result.Stdout, constants.NetworkName) {
+		PrintSuccess("Docker network: %s", constants.NetworkName)
 	} else {
-		PrintWarning("Docker network: frankendeploy not found")
+		PrintWarning("Docker network: %s not found", constants.NetworkName)
 	}
 
 	// System resources
@@ -586,67 +558,83 @@ func runServerStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println("System Resources:")
 
 	// CPU usage
-	result, _ = client.Exec("top -bn1 | grep 'Cpu(s)' | awk '{print 100 - $8}' 2>/dev/null || echo 'N/A'")
-	cpuUsage := strings.TrimSpace(result.Stdout)
-	if cpuUsage != "" && cpuUsage != "N/A" {
-		fmt.Printf("  CPU:    %s%% used\n", cpuUsage)
+	result, err = client.Exec("top -bn1 | grep 'Cpu(s)' | awk '{print 100 - $8}' 2>/dev/null || echo 'N/A'")
+	if err == nil {
+		cpuUsage := strings.TrimSpace(result.Stdout)
+		if cpuUsage != "" && cpuUsage != "N/A" {
+			fmt.Printf("  CPU:    %s%% used\n", cpuUsage)
+		}
 	}
 
 	// Memory usage
-	result, _ = client.Exec("free -m | awk 'NR==2{printf \"%.1f/%.1fGB (%.0f%%)\", $3/1024, $2/1024, $3*100/$2}'")
-	memUsage := strings.TrimSpace(result.Stdout)
-	if memUsage != "" {
-		fmt.Printf("  Memory: %s\n", memUsage)
+	result, err = client.Exec("free -m | awk 'NR==2{printf \"%.1f/%.1fGB (%.0f%%)\", $3/1024, $2/1024, $3*100/$2}'")
+	if err == nil {
+		memUsage := strings.TrimSpace(result.Stdout)
+		if memUsage != "" {
+			fmt.Printf("  Memory: %s\n", memUsage)
+		}
 	}
 
 	// Disk usage
-	result, _ = client.Exec("df -h / | awk 'NR==2{printf \"%s/%s (%s)\", $3, $2, $5}'")
-	diskUsage := strings.TrimSpace(result.Stdout)
-	if diskUsage != "" {
-		fmt.Printf("  Disk:   %s\n", diskUsage)
+	result, err = client.Exec("df -h / | awk 'NR==2{printf \"%s/%s (%s)\", $3, $2, $5}'")
+	if err == nil {
+		diskUsage := strings.TrimSpace(result.Stdout)
+		if diskUsage != "" {
+			fmt.Printf("  Disk:   %s\n", diskUsage)
+		}
 	}
 
 	// Load average
-	result, _ = client.Exec("uptime | awk -F'load average:' '{print $2}' | xargs")
-	loadAvg := strings.TrimSpace(result.Stdout)
-	if loadAvg != "" {
-		fmt.Printf("  Load:   %s\n", loadAvg)
+	result, err = client.Exec("uptime | awk -F'load average:' '{print $2}' | xargs")
+	if err == nil {
+		loadAvg := strings.TrimSpace(result.Stdout)
+		if loadAvg != "" {
+			fmt.Printf("  Load:   %s\n", loadAvg)
+		}
 	}
 
 	// List deployed apps with container stats
-	result, _ = client.Exec("ls -1 /opt/frankendeploy/apps 2>/dev/null")
-	apps := strings.TrimSpace(result.Stdout)
-	if apps != "" {
-		fmt.Println()
-		fmt.Println("Deployed Applications:")
-		fmt.Println()
-		for _, app := range strings.Split(apps, "\n") {
-			if app == "" {
-				continue
-			}
-			fmt.Printf("  %s:\n", app)
-
-			// Get container stats for app
-			statsCmd := fmt.Sprintf("docker stats --no-stream --format '{{.CPUPerc}}\t{{.MemUsage}}' %s 2>/dev/null", app)
-			result, _ = client.Exec(statsCmd)
-			stats := strings.TrimSpace(result.Stdout)
-			if stats != "" {
-				parts := strings.Split(stats, "\t")
-				if len(parts) >= 2 {
-					fmt.Printf("    App:    CPU %s, Mem %s\n", parts[0], parts[1])
+	result, err = client.Exec(fmt.Sprintf("ls -1 %s 2>/dev/null", constants.AppsDir))
+	if err == nil {
+		apps := strings.TrimSpace(result.Stdout)
+		if apps != "" {
+			fmt.Println()
+			fmt.Println("Deployed Applications:")
+			fmt.Println()
+			for _, app := range strings.Split(apps, "\n") {
+				if app == "" {
+					continue
 				}
-			} else {
-				fmt.Printf("    App:    not running\n")
-			}
+				fmt.Printf("  %s:\n", app)
 
-			// Get worker stats if exists
-			workerStatsCmd := fmt.Sprintf("docker stats --no-stream --format '{{.CPUPerc}}\t{{.MemUsage}}' %s-worker 2>/dev/null", app)
-			result, _ = client.Exec(workerStatsCmd)
-			workerStats := strings.TrimSpace(result.Stdout)
-			if workerStats != "" {
-				parts := strings.Split(workerStats, "\t")
-				if len(parts) >= 2 {
-					fmt.Printf("    Worker: CPU %s, Mem %s\n", parts[0], parts[1])
+				// Get container stats for app
+				statsCmd := fmt.Sprintf("docker stats --no-stream --format '{{.CPUPerc}}\t{{.MemUsage}}' %s 2>/dev/null", app)
+				statsResult, statsErr := client.Exec(statsCmd)
+				if statsErr == nil {
+					stats := strings.TrimSpace(statsResult.Stdout)
+					if stats != "" {
+						parts := strings.Split(stats, "\t")
+						if len(parts) >= 2 {
+							fmt.Printf("    App:    CPU %s, Mem %s\n", parts[0], parts[1])
+						}
+					} else {
+						fmt.Printf("    App:    not running\n")
+					}
+				} else {
+					fmt.Printf("    App:    not running\n")
+				}
+
+				// Get worker stats if exists
+				workerStatsCmd := fmt.Sprintf("docker stats --no-stream --format '{{.CPUPerc}}\t{{.MemUsage}}' %s-worker 2>/dev/null", app)
+				workerResult, workerErr := client.Exec(workerStatsCmd)
+				if workerErr == nil {
+					workerStats := strings.TrimSpace(workerResult.Stdout)
+					if workerStats != "" {
+						parts := strings.Split(workerStats, "\t")
+						if len(parts) >= 2 {
+							fmt.Printf("    Worker: CPU %s, Mem %s\n", parts[0], parts[1])
+						}
+					}
 				}
 			}
 		}
