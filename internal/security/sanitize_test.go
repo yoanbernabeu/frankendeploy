@@ -372,22 +372,34 @@ func TestValidateSharedDir(t *testing.T) {
 
 func TestGenerateHeredocDelimiter(t *testing.T) {
 	t.Run("non-empty", func(t *testing.T) {
-		delim := GenerateHeredocDelimiter("ENVEOF")
+		delim, err := GenerateHeredocDelimiter("ENVEOF")
+		if err != nil {
+			t.Fatalf("GenerateHeredocDelimiter returned error: %v", err)
+		}
 		if delim == "" {
 			t.Error("GenerateHeredocDelimiter returned empty string")
 		}
 	})
 
 	t.Run("has prefix", func(t *testing.T) {
-		delim := GenerateHeredocDelimiter("ENVEOF")
+		delim, err := GenerateHeredocDelimiter("ENVEOF")
+		if err != nil {
+			t.Fatalf("GenerateHeredocDelimiter returned error: %v", err)
+		}
 		if !strings.HasPrefix(delim, "ENVEOF_") {
 			t.Errorf("expected prefix 'ENVEOF_', got %q", delim)
 		}
 	})
 
 	t.Run("unique between calls", func(t *testing.T) {
-		delim1 := GenerateHeredocDelimiter("TEST")
-		delim2 := GenerateHeredocDelimiter("TEST")
+		delim1, err := GenerateHeredocDelimiter("TEST")
+		if err != nil {
+			t.Fatalf("GenerateHeredocDelimiter returned error: %v", err)
+		}
+		delim2, err := GenerateHeredocDelimiter("TEST")
+		if err != nil {
+			t.Fatalf("GenerateHeredocDelimiter returned error: %v", err)
+		}
 		if delim1 == delim2 {
 			t.Error("GenerateHeredocDelimiter returned identical values on consecutive calls")
 		}

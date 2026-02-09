@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/frankendeploy/internal/caddy"
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
+	"github.com/yoanbernabeu/frankendeploy/internal/constants"
 	"github.com/yoanbernabeu/frankendeploy/internal/deploy"
 	"github.com/yoanbernabeu/frankendeploy/internal/security"
 	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
@@ -100,7 +101,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	imageName := fmt.Sprintf("%s:%s", projectCfg.Name, deployTag)
-	remoteAppPath := filepath.Join("/opt/frankendeploy/apps", projectCfg.Name)
+	remoteAppPath := constants.AppBasePath(projectCfg.Name)
 
 	PrintInfo("Deploying %s to %s...", projectCfg.Name, serverName)
 
@@ -173,13 +174,67 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		PrintSuccess("Database ready: %s", projectCfg.Database.Driver)
 	}
 
-	// Step 4: Deploy new version
-	PrintInfo("Starting new version...")
-	if err := deployNewVersion(client, projectCfg, imageName, remoteAppPath, deployTag, databaseURL); err != nil {
+	// Blue-green deployment: start new container with temp name, health check, then swap
+	state := deploy.NewDeployState(projectCfg.Name)
+
+	// Step 4: Prepare release directories and shared volumes
+	PrintInfo("Preparing release...")
+	state.Phase = deploy.PhasePrepareRelease
+	if err := prepareRelease(client, projectCfg, remoteAppPath, deployTag); err != nil {
 		return fmt.Errorf("deployment failed: %w", err)
 	}
 
-	// Step 4b: Deploy Messenger workers if enabled
+	// Check if old container exists (for swap phase)
+	oldResult, _ := client.Exec(fmt.Sprintf("docker ps -q -f name=^%s$", projectCfg.Name))
+	state.OldContainerExists = strings.TrimSpace(oldResult.Stdout) != ""
+
+	// Step 5: Start new container with temporary name (old container still running)
+	PrintInfo("Starting new version (blue-green)...")
+	state.Phase = deploy.PhaseStartNewContainer
+	if err := startNewContainer(client, projectCfg, imageName, remoteAppPath, deployTag, databaseURL, state.TempContainerName); err != nil {
+		return fmt.Errorf("deployment failed: %w", err)
+	}
+
+	// Step 6: Run pre-deploy hooks on the NEW container
+	if len(projectCfg.Deploy.Hooks.PreDeploy) > 0 {
+		PrintInfo("Running pre-deploy hooks...")
+		state.Phase = deploy.PhasePreDeployHooks
+		if err := runDeployHooks(client, state.TempContainerName, projectCfg.Deploy.Hooks.PreDeploy); err != nil {
+			if !deployForce {
+				PrintWarning("Pre-deploy hooks failed, rolling back...")
+				rollbackNewContainer(client, state)
+				return fmt.Errorf("pre-deploy hooks failed: %w", err)
+			}
+			PrintWarning("Pre-deploy hooks failed but continuing (--force)")
+		}
+
+		// Check for empty migrations if migration hook was run
+		if deploy.HasMigrationHook(projectCfg.Deploy.Hooks.PreDeploy) {
+			checkAndWarnMigrationState(client, state.TempContainerName)
+		}
+	}
+
+	// Step 7: Health check on the NEW container (old still running = zero downtime)
+	PrintInfo("Running health check...")
+	state.Phase = deploy.PhaseHealthCheck
+	if err := runHealthCheckOnContainer(client, projectCfg, state.TempContainerName); err != nil {
+		if !deployForce {
+			PrintWarning("Health check failed, rolling back...")
+			rollbackNewContainer(client, state)
+			return fmt.Errorf("deployment failed health check: %w", err)
+		}
+		PrintWarning("Health check failed but continuing (--force)")
+	}
+	PrintSuccess("Health check passed")
+
+	// Step 8: Swap containers (stop old, rename new → final, update symlink)
+	PrintInfo("Swapping containers...")
+	state.Phase = deploy.PhaseSwapContainers
+	if err := swapContainers(client, projectCfg.Name, remoteAppPath, deployTag, state.TempContainerName); err != nil {
+		return fmt.Errorf("swap failed: %w", err)
+	}
+
+	// Step 8b: Deploy Messenger workers if enabled
 	if projectCfg.Messenger.Enabled {
 		PrintInfo("Starting Messenger workers...")
 		if err := deployMessengerWorkers(client, projectCfg, imageName, remoteAppPath, databaseURL); err != nil {
@@ -189,55 +244,26 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Step 5: Run pre_deploy hooks
-	if len(projectCfg.Deploy.Hooks.PreDeploy) > 0 {
-		PrintInfo("Running pre-deploy hooks...")
-		if err := runDeployHooks(client, projectCfg.Name, projectCfg.Deploy.Hooks.PreDeploy); err != nil {
-			if !deployForce {
-				PrintWarning("Pre-deploy hooks failed, rolling back...")
-				_ = rollbackDeployment(client, projectCfg.Name, remoteAppPath)
-				return fmt.Errorf("pre-deploy hooks failed: %w", err)
-			}
-			PrintWarning("Pre-deploy hooks failed but continuing (--force)")
-		}
-
-		// Check for empty migrations if migration hook was run
-		if deploy.HasMigrationHook(projectCfg.Deploy.Hooks.PreDeploy) {
-			checkAndWarnMigrationState(client, projectCfg.Name)
-		}
-	}
-
-	// Step 6: Health check
-	PrintInfo("Running health check...")
-	if err := runHealthCheck(client, projectCfg, remoteAppPath); err != nil {
-		if !deployForce {
-			// Rollback
-			PrintWarning("Health check failed, rolling back...")
-			_ = rollbackDeployment(client, projectCfg.Name, remoteAppPath)
-			return fmt.Errorf("deployment failed health check: %w", err)
-		}
-		PrintWarning("Health check failed but continuing (--force)")
-	}
-	PrintSuccess("Health check passed")
-
-	// Step 8: Run post_deploy hooks
+	// Step 9: Run post_deploy hooks
+	state.Phase = deploy.PhasePostDeployHooks
 	if len(projectCfg.Deploy.Hooks.PostDeploy) > 0 {
 		PrintInfo("Running post-deploy hooks...")
 		if err := runDeployHooks(client, projectCfg.Name, projectCfg.Deploy.Hooks.PostDeploy); err != nil {
 			PrintWarning("Post-deploy hooks failed: %v", err)
-			// Don't rollback for post-deploy hooks, app is already running
 		}
 	}
 
-	// Step 9: Update Caddy config
+	// Step 10: Update Caddy config
 	PrintInfo("Updating reverse proxy...")
 	if err := updateCaddyConfig(client, projectCfg); err != nil {
 		PrintWarning("Failed to update Caddy: %v", err)
 	}
 
-	// Step 7: Cleanup old releases
+	// Step 11: Cleanup old releases
+	state.Phase = deploy.PhaseCleanup
 	PrintInfo("Cleaning up old releases...")
 	cleanupOldReleases(client, remoteAppPath, projectCfg.Deploy.KeepReleases)
+	state.Phase = deploy.PhaseDone
 
 	PrintSuccess("Deployment complete!")
 	fmt.Println()
@@ -308,7 +334,9 @@ func transferImage(client *ssh.Client, serverCfg *config.ServerConfig, imageName
 func transferSourceCode(client *ssh.Client, serverCfg *config.ServerConfig, appName, appPath string) error {
 	// Create build directory on server
 	buildPath := fmt.Sprintf("%s/build", appPath)
-	_, _ = client.Exec(fmt.Sprintf("rm -rf %s && mkdir -p %s", buildPath, buildPath))
+	if _, err := client.Exec(fmt.Sprintf("rm -rf %s && mkdir -p %s", buildPath, buildPath)); err != nil {
+		return fmt.Errorf("failed to create build directory: %w", err)
+	}
 
 	// Use rsync to transfer source code (respects .dockerignore patterns)
 	rsyncArgs := []string{
@@ -363,44 +391,37 @@ func buildDockerImageRemote(client *ssh.Client, imageName, appPath string) error
 	}
 
 	// Cleanup build directory
-	_, _ = client.Exec(fmt.Sprintf("rm -rf %s", buildPath))
+	if _, err := client.Exec(fmt.Sprintf("rm -rf %s", buildPath)); err != nil {
+		PrintVerbose("Could not cleanup build directory: %v", err)
+	}
 
 	return nil
 }
 
-func deployNewVersion(client *ssh.Client, cfg *config.ProjectConfig, imageName, appPath, tag, databaseURL string) error {
+// prepareRelease creates the release directory, shared directories and files, and fixes permissions.
+func prepareRelease(client *ssh.Client, cfg *config.ProjectConfig, appPath, tag string) error {
 	releasePath := filepath.Join(appPath, "releases", tag)
-	currentPath := filepath.Join(appPath, "current")
 	sharedPath := filepath.Join(appPath, "shared")
 
-	// Prepare shared directories
 	sharedDirs := cfg.Deploy.SharedDirs
 	if len(sharedDirs) == 0 {
-		// Default shared directories for Symfony
 		sharedDirs = []string{"var/log", "var/sessions"}
 	}
 
-	// Prepare shared files
 	sharedFiles := cfg.Deploy.SharedFiles
 	if len(sharedFiles) == 0 {
 		sharedFiles = []string{".env.local"}
 	}
 
-	// Build commands to create shared structure
 	commands := []string{
-		// Create release directory
 		fmt.Sprintf("mkdir -p %s", releasePath),
-
-		// Create shared base directory
 		fmt.Sprintf("mkdir -p %s", sharedPath),
 	}
 
-	// Create shared directories
 	for _, dir := range sharedDirs {
 		commands = append(commands, fmt.Sprintf("mkdir -p %s/%s", sharedPath, dir))
 	}
 
-	// Create shared files (touch if not exists)
 	for _, file := range sharedFiles {
 		dirPath := filepath.Dir(file)
 		if dirPath != "." {
@@ -409,7 +430,6 @@ func deployNewVersion(client *ssh.Client, cfg *config.ProjectConfig, imageName, 
 		commands = append(commands, fmt.Sprintf("touch %s/%s", sharedPath, file))
 	}
 
-	// Execute directory creation commands first
 	for _, command := range commands {
 		PrintVerboseCommand(command)
 		result, err := client.Exec(command)
@@ -421,54 +441,126 @@ func deployNewVersion(client *ssh.Client, cfg *config.ProjectConfig, imageName, 
 		}
 	}
 
-	// Fix permissions for container user 1000:1000
 	fixSharedPermissions(client, sharedPath, sharedDirs, sharedFiles)
+	return nil
+}
 
-	// Build container commands
-	commands = []string{}
+// startNewContainer starts the new version with a temporary container name.
+// The old container remains running for zero-downtime deployment.
+func startNewContainer(client *ssh.Client, cfg *config.ProjectConfig, imageName, appPath, tag, databaseURL, containerName string) error {
+	sharedPath := filepath.Join(appPath, "shared")
 
-	// Stop old container if exists
-	commands = append(commands,
-		fmt.Sprintf("docker stop %s 2>/dev/null || true", cfg.Name),
-		fmt.Sprintf("docker rm %s 2>/dev/null || true", cfg.Name),
-	)
+	sharedDirs := cfg.Deploy.SharedDirs
+	if len(sharedDirs) == 0 {
+		sharedDirs = []string{"var/log", "var/sessions"}
+	}
+	sharedFiles := cfg.Deploy.SharedFiles
+	if len(sharedFiles) == 0 {
+		sharedFiles = []string{".env.local"}
+	}
 
-	// Build volume mounts
 	volumeMounts := buildVolumeMounts(sharedPath, sharedDirs, sharedFiles)
 
-	// Build environment variables
-	envVars := "-e SERVER_NAME=:8080 -e APP_ENV=prod -e APP_DEBUG=0"
+	envVars := fmt.Sprintf("-e SERVER_NAME=:%s -e APP_ENV=prod -e APP_DEBUG=0", constants.AppPort)
 	if databaseURL != "" {
 		envVars += fmt.Sprintf(" -e DATABASE_URL=%s", security.ShellEscape(databaseURL))
 	}
 
-	// Start new container with all shared volumes mounted
-	// SECURITY: Run as non-root user (1000:1000) with non-privileged port 8080
-	dockerRunCmd := fmt.Sprintf(`docker run -d --name %s \
-		--network frankendeploy \
-		--restart unless-stopped \
-		--user 1000:1000 \
-		%s \
-		%s \
-		%s`, cfg.Name, envVars, volumeMounts, imageName)
+	// Remove any leftover temp container from a previous failed deploy
+	if _, err := client.Exec(fmt.Sprintf("docker rm -f %s 2>/dev/null || true", containerName)); err != nil {
+		PrintVerbose("Could not cleanup old temp container: %v", err)
+	}
 
-	commands = append(commands, dockerRunCmd)
+	// SECURITY: Run as non-root user with non-privileged port
+	dockerRunCmd := fmt.Sprintf(`docker run -d --name %s \
+		--network %s \
+		--restart unless-stopped \
+		--user %s \
+		%s \
+		%s \
+		%s`, containerName, constants.NetworkName, constants.ContainerUser, envVars, volumeMounts, imageName)
+
+	PrintVerboseCommand(dockerRunCmd)
+	result, err := client.Exec(dockerRunCmd)
+	if err != nil {
+		return fmt.Errorf("failed to start container: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("failed to start container: %s", result.Stderr)
+	}
+
+	return nil
+}
+
+// swapContainers performs the atomic swap: stop old container, rename new → final, update symlink.
+func swapContainers(client *ssh.Client, appName, appPath, tag, tempContainerName string) error {
+	releasePath := filepath.Join(appPath, "releases", tag)
+	currentPath := filepath.Join(appPath, "current")
+
+	// Stop and remove old container
+	if _, err := client.Exec(fmt.Sprintf("docker stop %s 2>/dev/null || true", appName)); err != nil {
+		PrintVerbose("Could not stop old container: %v", err)
+	}
+	if _, err := client.Exec(fmt.Sprintf("docker rm %s 2>/dev/null || true", appName)); err != nil {
+		PrintVerbose("Could not remove old container: %v", err)
+	}
+
+	// Rename temp container to final name
+	result, err := client.Exec(fmt.Sprintf("docker rename %s %s", tempContainerName, appName))
+	if err != nil {
+		return fmt.Errorf("failed to rename container: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("failed to rename container: %s", result.Stderr)
+	}
 
 	// Update current symlink and save release info
-	commands = append(commands,
-		fmt.Sprintf("ln -sfn %s %s", releasePath, currentPath),
-		fmt.Sprintf("echo '%s' > %s/release", tag, releasePath),
-	)
+	if _, err := client.Exec(fmt.Sprintf("ln -sfn %s %s", releasePath, currentPath)); err != nil {
+		return fmt.Errorf("failed to update symlink: %w", err)
+	}
+	if _, err := client.Exec(fmt.Sprintf("echo '%s' > %s/release", tag, releasePath)); err != nil {
+		PrintVerbose("Could not write release file: %v", err)
+	}
 
-	for _, command := range commands {
-		PrintVerboseCommand(command)
-		result, err := client.Exec(command)
-		if err != nil {
-			return fmt.Errorf("command failed: %w", err)
+	return nil
+}
+
+// rollbackNewContainer removes the temporary new container, leaving the old one intact.
+func rollbackNewContainer(client *ssh.Client, state *deploy.DeployState) {
+	actions := state.RollbackActions()
+	for _, action := range actions {
+		PrintVerboseCommand(action)
+		if _, err := client.Exec(action); err != nil {
+			PrintVerbose("Rollback action failed: %v", err)
 		}
-		if result.ExitCode != 0 && !strings.Contains(command, "|| true") {
-			return fmt.Errorf("command failed: %s", result.Stderr)
-		}
+	}
+}
+
+// runHealthCheckOnContainer runs a health check against a specific container name.
+func runHealthCheckOnContainer(client *ssh.Client, cfg *config.ProjectConfig, containerName string) error {
+	healthPath := cfg.Deploy.HealthcheckPath
+	if healthPath == "" {
+		healthPath = "/"
+	}
+
+	if err := security.ValidateHealthPath(healthPath); err != nil {
+		return fmt.Errorf("invalid health check path: %w", err)
+	}
+
+	// Wait for container to be ready
+	time.Sleep(5 * time.Second)
+
+	// Check container is running
+	result, err := client.Exec(fmt.Sprintf("docker ps --filter name=%s --format '{{.Status}}'", containerName))
+	if err != nil || result.Stdout == "" {
+		return fmt.Errorf("container %s not running", containerName)
+	}
+
+	// Check health endpoint (port 8080 for non-root execution)
+	healthCmd := fmt.Sprintf("docker exec %s curl -sf http://localhost:%s%s", containerName, constants.AppPort, healthPath)
+	result, err = client.Exec(healthCmd)
+	if err != nil || result.ExitCode != 0 {
+		return fmt.Errorf("health check failed on %s", containerName)
 	}
 
 	return nil
@@ -501,17 +593,21 @@ func buildVolumeMounts(sharedPath string, sharedDirs, sharedFiles []string) stri
 // fixSharedPermissions ensures shared directories and files have correct ownership for container user 1000:1000
 func fixSharedPermissions(client *ssh.Client, sharedPath string, sharedDirs, sharedFiles []string) {
 	// Fix ownership of shared directory itself
-	cmd := fmt.Sprintf("sudo chown 1000:1000 %s 2>/dev/null || true", sharedPath)
+	cmd := fmt.Sprintf("sudo chown %s %s 2>/dev/null || true", constants.ContainerUser, sharedPath)
 	PrintVerboseCommand(cmd)
-	_, _ = client.Exec(cmd)
+	if _, err := client.Exec(cmd); err != nil {
+		PrintWarning("Could not fix permissions for shared path: %v", err)
+	}
 
 	// Fix ownership of shared directories (recursively for contents)
 	for _, dir := range sharedDirs {
 		dirPath := fmt.Sprintf("%s/%s", sharedPath, dir)
-		cmd := fmt.Sprintf("sudo chown -R 1000:1000 %s 2>/dev/null || true", dirPath)
+		cmd := fmt.Sprintf("sudo chown -R %s %s 2>/dev/null || true", constants.ContainerUser, dirPath)
 		PrintVerboseCommand(cmd)
-		result, _ := client.Exec(cmd)
-		if result != nil && result.ExitCode != 0 {
+		result, err := client.Exec(cmd)
+		if err != nil {
+			PrintWarning("Could not fix permissions for %s: %v", dir, err)
+		} else if result != nil && result.ExitCode != 0 {
 			PrintWarning("Could not fix permissions for %s (may require manual sudo)", dir)
 		}
 	}
@@ -520,71 +616,23 @@ func fixSharedPermissions(client *ssh.Client, sharedPath string, sharedDirs, sha
 	for _, file := range sharedFiles {
 		filePath := fmt.Sprintf("%s/%s", sharedPath, file)
 		// Set ownership
-		cmd := fmt.Sprintf("sudo chown 1000:1000 %s 2>/dev/null || true", filePath)
+		cmd := fmt.Sprintf("sudo chown %s %s 2>/dev/null || true", constants.ContainerUser, filePath)
 		PrintVerboseCommand(cmd)
-		_, _ = client.Exec(cmd)
+		if _, err := client.Exec(cmd); err != nil {
+			PrintWarning("Could not fix ownership for %s: %v", file, err)
+		}
 
 		// Set restrictive permissions for .env files (contains secrets)
 		if strings.HasPrefix(file, ".env") || strings.Contains(file, "/.env") {
 			cmd = fmt.Sprintf("sudo chmod 600 %s 2>/dev/null || true", filePath)
 			PrintVerboseCommand(cmd)
-			_, _ = client.Exec(cmd)
+			if _, err := client.Exec(cmd); err != nil {
+				PrintWarning("Could not set permissions for %s: %v", file, err)
+			}
 		}
 	}
 }
 
-func runHealthCheck(client *ssh.Client, cfg *config.ProjectConfig, appPath string) error {
-	healthPath := cfg.Deploy.HealthcheckPath
-	if healthPath == "" {
-		healthPath = "/"
-	}
-
-	// Validate health path
-	if err := security.ValidateHealthPath(healthPath); err != nil {
-		return fmt.Errorf("invalid health check path: %w", err)
-	}
-
-	// Wait for container to be ready
-	time.Sleep(5 * time.Second)
-
-	// Check container is running
-	result, err := client.Exec(fmt.Sprintf("docker ps --filter name=%s --format '{{.Status}}'", cfg.Name))
-	if err != nil || result.Stdout == "" {
-		return fmt.Errorf("container not running")
-	}
-
-	// Check health endpoint (port 8080 for non-root execution)
-	healthCmd := fmt.Sprintf("docker exec %s curl -sf http://localhost:8080%s", cfg.Name, healthPath)
-	result, err = client.Exec(healthCmd)
-	if err != nil || result.ExitCode != 0 {
-		return fmt.Errorf("health check failed")
-	}
-
-	return nil
-}
-
-func rollbackDeployment(client *ssh.Client, appName, appPath string) error {
-	// Get previous release
-	result, _ := client.Exec(fmt.Sprintf("ls -1t %s/releases | head -2 | tail -1", appPath))
-	previousRelease := strings.TrimSpace(result.Stdout)
-
-	if previousRelease == "" {
-		return fmt.Errorf("no previous release to rollback to")
-	}
-
-	// Stop current containers (app + worker)
-	_, _ = client.Exec(fmt.Sprintf("docker stop %s 2>/dev/null || true", appName))
-	_, _ = client.Exec(fmt.Sprintf("docker rm %s 2>/dev/null || true", appName))
-	_, _ = client.Exec(fmt.Sprintf("docker stop %s-worker 2>/dev/null || true", appName))
-	_, _ = client.Exec(fmt.Sprintf("docker rm %s-worker 2>/dev/null || true", appName))
-
-	// Restore previous release
-	previousPath := filepath.Join(appPath, "releases", previousRelease)
-	currentPath := filepath.Join(appPath, "current")
-	_, _ = client.Exec(fmt.Sprintf("ln -sfn %s %s", previousPath, currentPath))
-
-	return nil
-}
 
 func updateCaddyConfig(client *ssh.Client, cfg *config.ProjectConfig) error {
 	domain := cfg.Deploy.Domain
@@ -610,7 +658,10 @@ func updateCaddyConfig(client *ssh.Client, cfg *config.ProjectConfig) error {
 	}
 
 	// Write config and reload Caddy
-	commands := caddy.WriteAppConfigCommands(cfg.Name, configContent)
+	commands, err := caddy.WriteAppConfigCommands(cfg.Name, configContent)
+	if err != nil {
+		return fmt.Errorf("failed to prepare Caddy commands: %w", err)
+	}
 	for _, command := range commands {
 		PrintVerboseCommand(command)
 		result, err := client.Exec(command)
@@ -628,7 +679,7 @@ func updateCaddyConfig(client *ssh.Client, cfg *config.ProjectConfig) error {
 
 func cleanupOldReleases(client *ssh.Client, appPath string, keepReleases int) {
 	if keepReleases <= 0 {
-		keepReleases = 5
+		keepReleases = constants.DefaultKeepReleases
 	}
 
 	// List releases and remove old ones
@@ -636,7 +687,9 @@ func cleanupOldReleases(client *ssh.Client, appPath string, keepReleases int) {
 		"cd %s/releases && ls -1t | tail -n +%d | xargs -r rm -rf",
 		appPath, keepReleases+1)
 
-	_, _ = client.Exec(cleanupCmd)
+	if _, err := client.Exec(cleanupCmd); err != nil {
+		PrintVerbose("Could not cleanup old releases: %v", err)
+	}
 }
 
 // runDeployHooks executes deployment hooks inside the container
@@ -697,19 +750,21 @@ func deployMessengerWorkers(client *ssh.Client, cfg *config.ProjectConfig, image
 
 	// Stop existing workers
 	stopCmd := fmt.Sprintf("docker stop %s 2>/dev/null || true && docker rm %s 2>/dev/null || true", workerName, workerName)
-	_, _ = client.Exec(stopCmd)
+	if _, err := client.Exec(stopCmd); err != nil {
+		PrintVerbose("Could not stop existing worker: %v", err)
+	}
 
 	// Start worker container with messenger:consume command
-	// SECURITY: Run as non-root user (1000:1000)
+	// SECURITY: Run as non-root user
 	workerCmd := fmt.Sprintf(`docker run -d --name %s \
-		--network frankendeploy \
+		--network %s \
 		--restart unless-stopped \
-		--user 1000:1000 \
+		--user %s \
 		%s \
 		%s \
 		%s \
 		php bin/console messenger:consume %s --time-limit=3600 --memory-limit=256M -vv`,
-		workerName, envVars, volumeMounts, imageName, transportsArg)
+		workerName, constants.NetworkName, constants.ContainerUser, envVars, volumeMounts, imageName, transportsArg)
 
 	result, err := client.Exec(workerCmd)
 	if err != nil {
@@ -735,19 +790,22 @@ func deployManagedDatabase(client *ssh.Client, cfg *config.ProjectConfig, appPat
 	credentialsFile := filepath.Join(appPath, "shared", ".db_credentials")
 
 	// Check if database container already exists and is running
-	result, _ := client.Exec(fmt.Sprintf("docker ps -q -f name=%s", dbContainerName))
-	if strings.TrimSpace(result.Stdout) != "" {
+	checkResult, checkErr := client.Exec(fmt.Sprintf("docker ps -q -f name=%s", dbContainerName))
+	if checkErr == nil && strings.TrimSpace(checkResult.Stdout) != "" {
 		// Container exists, read existing credentials
-		result, err := client.Exec(fmt.Sprintf("cat %s 2>/dev/null", credentialsFile))
-		if err == nil && result.ExitCode == 0 && result.Stdout != "" {
+		credResult, credErr := client.Exec(fmt.Sprintf("cat %s 2>/dev/null", credentialsFile))
+		if credErr == nil && credResult.ExitCode == 0 && credResult.Stdout != "" {
 			PrintVerbose("Using existing database container")
-			return strings.TrimSpace(result.Stdout), nil
+			return strings.TrimSpace(credResult.Stdout), nil
 		}
 	}
 
 	// Generate credentials
 	dbUser := cfg.Name
-	dbPassword := generateRandomPassword(24)
+	dbPassword, err := generateRandomPassword(24)
+	if err != nil {
+		return "", err
+	}
 
 	// Build DATABASE_URL based on driver
 	var databaseURL string
@@ -785,17 +843,22 @@ func deployManagedDatabase(client *ssh.Client, cfg *config.ProjectConfig, appPat
 	}
 
 	// Stop and remove existing container if exists (for recreation)
-	_, _ = client.Exec(fmt.Sprintf("docker stop %s 2>/dev/null || true", dbContainerName))
-	_, _ = client.Exec(fmt.Sprintf("docker rm %s 2>/dev/null || true", dbContainerName))
+	if _, err := client.Exec(fmt.Sprintf("docker stop %s 2>/dev/null || true", dbContainerName)); err != nil {
+		PrintVerbose("Could not stop existing db container: %v", err)
+	}
+	if _, err := client.Exec(fmt.Sprintf("docker rm %s 2>/dev/null || true", dbContainerName)); err != nil {
+		PrintVerbose("Could not remove existing db container: %v", err)
+	}
 
 	// Create database container with persistent volume
 	dbRunCmd := fmt.Sprintf(`docker run -d --name %s \
-		--network frankendeploy \
+		--network %s \
 		--restart unless-stopped \
 		%s \
 		-v %s-data:/var/lib/%s \
 		%s`,
 		dbContainerName,
+		constants.NetworkName,
 		dockerEnv,
 		dbContainerName,
 		map[string]string{"pgsql": "postgresql/data", "mysql": "mysql"}[cfg.Database.Driver],
@@ -810,8 +873,12 @@ func deployManagedDatabase(client *ssh.Client, cfg *config.ProjectConfig, appPat
 	}
 
 	// Save credentials to file
-	_, _ = client.Exec(fmt.Sprintf("echo %s > %s", security.ShellEscape(databaseURL), credentialsFile))
-	_, _ = client.Exec(fmt.Sprintf("chmod 600 %s", credentialsFile))
+	if _, err := client.Exec(fmt.Sprintf("echo %s > %s", security.ShellEscape(databaseURL), credentialsFile)); err != nil {
+		return "", fmt.Errorf("failed to save database credentials: %w", err)
+	}
+	if _, err := client.Exec(fmt.Sprintf("chmod 600 %s", credentialsFile)); err != nil {
+		PrintWarning("Could not set permissions on credentials file: %v", err)
+	}
 
 	// Wait for database to be ready
 	PrintVerbose("Waiting for database to be ready...")
@@ -823,21 +890,23 @@ func deployManagedDatabase(client *ssh.Client, cfg *config.ProjectConfig, appPat
 			checkCmd = fmt.Sprintf("docker exec %s mysqladmin ping -u%s -p%s --silent",
 				dbContainerName, security.ShellEscape(dbUser), security.ShellEscape(dbPassword))
 		}
-		result, _ := client.Exec(checkCmd)
-		if result.ExitCode == 0 {
+		checkResult, _ := client.Exec(checkCmd)
+		if checkResult != nil && checkResult.ExitCode == 0 {
 			break
 		}
-		_, _ = client.Exec("sleep 1")
+		time.Sleep(1 * time.Second)
 	}
 
 	return databaseURL, nil
 }
 
 // generateRandomPassword generates a secure random password
-func generateRandomPassword(length int) string {
-	bytes := make([]byte, length/2)
-	_, _ = rand.Read(bytes)
-	return hex.EncodeToString(bytes)
+func generateRandomPassword(length int) (string, error) {
+	b := make([]byte, length/2)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate random password: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // runEnvPreflightCheck verifies required environment variables before deployment

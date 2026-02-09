@@ -267,10 +267,12 @@ func ValidateSharedDir(dir string) error {
 
 // GenerateHeredocDelimiter generates a unique heredoc delimiter to prevent
 // heredoc injection attacks. Uses crypto/rand for unpredictability.
-func GenerateHeredocDelimiter(prefix string) string {
-	bytes := make([]byte, 16)
-	_, _ = rand.Read(bytes)
-	return prefix + "_" + hex.EncodeToString(bytes)
+func GenerateHeredocDelimiter(prefix string) (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate random bytes for heredoc delimiter: %w", err)
+	}
+	return prefix + "_" + hex.EncodeToString(b), nil
 }
 
 // SanitizeCommandForLog masks sensitive values in commands before logging.

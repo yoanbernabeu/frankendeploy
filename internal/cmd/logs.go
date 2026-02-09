@@ -4,9 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/yoanbernabeu/frankendeploy/internal/config"
 	"github.com/yoanbernabeu/frankendeploy/internal/security"
-	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
 )
 
 var logsCmd = &cobra.Command{
@@ -43,9 +41,6 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	serverName := args[0]
 
 	// Validate inputs
-	if err := security.ValidateServerName(serverName); err != nil {
-		return fmt.Errorf("invalid server name: %w", err)
-	}
 	if err := security.ValidateLogTail(logsTail); err != nil {
 		return fmt.Errorf("invalid --tail value: %w", err)
 	}
@@ -59,40 +54,21 @@ func runLogs(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid --service value: must be 'app', 'worker', or 'all'")
 	}
 
-	// Load project config
-	projectCfg, err := config.LoadProjectConfig(GetConfigFile())
+	conn, err := ConnectToServer(serverName)
 	if err != nil {
 		return err
 	}
-
-	// Load global config
-	globalCfg, err := config.LoadGlobalConfig()
-	if err != nil {
-		return err
-	}
-
-	// Get server config
-	serverCfg, err := globalCfg.GetServer(serverName)
-	if err != nil {
-		return err
-	}
-
-	// Connect to server
-	client := ssh.NewClient(serverCfg.Host, serverCfg.User, serverCfg.Port, serverCfg.KeyPath)
-	if err := client.Connect(); err != nil {
-		return fmt.Errorf("failed to connect: %w", err)
-	}
-	defer client.Close()
+	defer conn.Client.Close()
 
 	// Determine container name(s) based on service flag
 	var containers []string
 	switch logsService {
 	case "app":
-		containers = []string{projectCfg.Name}
+		containers = []string{conn.Project.Name}
 	case "worker":
-		containers = []string{fmt.Sprintf("%s-worker", projectCfg.Name)}
+		containers = []string{fmt.Sprintf("%s-worker", conn.Project.Name)}
 	case "all":
-		containers = []string{projectCfg.Name, fmt.Sprintf("%s-worker", projectCfg.Name)}
+		containers = []string{conn.Project.Name, fmt.Sprintf("%s-worker", conn.Project.Name)}
 	}
 
 	// Show logs for each container
@@ -119,13 +95,13 @@ func runLogs(cmd *cobra.Command, args []string) error {
 			if logsSince != "" {
 				logsCommand += fmt.Sprintf(" --since %s", logsSince)
 			}
-			result, _ := client.Exec(logsCommand)
+			result, _ := conn.Client.Exec(logsCommand)
 			fmt.Print(result.Stdout)
 			if result.Stderr != "" {
 				fmt.Print(result.Stderr)
 			}
 		} else {
-			if err := client.ExecStream(logsCommand); err != nil {
+			if err := conn.Client.ExecStream(logsCommand); err != nil {
 				// Container might not exist (e.g., no worker)
 				if logsService != "all" {
 					return fmt.Errorf("failed to get logs: %w", err)

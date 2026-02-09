@@ -89,6 +89,7 @@ type GlobalConfig struct {
 	Servers     map[string]ServerConfig `yaml:"servers"`
 	DefaultUser string                  `yaml:"default_user,omitempty"`
 	DefaultPort int                     `yaml:"default_port,omitempty"`
+	SSHTimeout  int                     `yaml:"ssh_timeout,omitempty"`
 }
 
 // ServerConfig represents a configured server
