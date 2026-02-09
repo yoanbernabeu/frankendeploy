@@ -47,10 +47,10 @@ wait_for_database() {
         if [ -n "$DB_HOST" ] && [ "$DB_HOST" != "localhost" ]; then
             log_info "Waiting for database at $DB_HOST:$DB_PORT..."
             ATTEMPTS=0
-            MAX_ATTEMPTS=30
+            MAX_ATTEMPTS={{ .MaxDBWaitAttempts }}
             until nc -z "$DB_HOST" "$DB_PORT" 2>/dev/null || [ $ATTEMPTS -eq $MAX_ATTEMPTS ]; do
                 ATTEMPTS=$((ATTEMPTS + 1))
-                sleep 1
+                sleep {{ .DBWaitInterval }}
             done
             if [ $ATTEMPTS -eq $MAX_ATTEMPTS ]; then
                 log_error "Database not available"

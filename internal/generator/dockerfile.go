@@ -3,7 +3,6 @@ package generator
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
 )
@@ -46,6 +45,10 @@ func (g *DockerfileGenerator) Generate() (string, error) {
 		data.Assets = &g.config.Assets
 	}
 
+	if err := ValidateDockerfileData(data); err != nil {
+		return "", fmt.Errorf("validation failed: %w", err)
+	}
+
 	return g.loader.Execute("dockerfile.tmpl", data)
 }
 
@@ -68,50 +71,8 @@ func (g *DockerfileGenerator) WriteDockerfile(path string) error {
 }
 
 // GenerateDockerignore generates a .dockerignore file
-func (g *DockerfileGenerator) GenerateDockerignore() string {
-	ignorePatterns := []string{
-		"# Git",
-		".git",
-		".gitignore",
-		".gitattributes",
-		"",
-		"# IDE",
-		".idea",
-		".vscode",
-		"*.swp",
-		"*.swo",
-		"",
-		"# Docker",
-		"Dockerfile*",
-		"compose*.yaml",
-		"compose*.yml",
-		".docker",
-		"",
-		"# Dependencies (will be installed fresh)",
-		"vendor",
-		"node_modules",
-		"",
-		"# Build artifacts",
-		"public/build",
-		"var/cache",
-		"var/log",
-		"",
-		"# Test files",
-		"tests",
-		"phpunit.xml*",
-		".phpunit*",
-		"",
-		"# Dev files",
-		".env.local",
-		".env.*.local",
-		"*.md",
-		"LICENSE",
-		"",
-		"# FrankenDeploy",
-		"frankendeploy.yaml",
-	}
-
-	return strings.Join(ignorePatterns, "\n")
+func (g *DockerfileGenerator) GenerateDockerignore() (string, error) {
+	return g.loader.Execute("dockerignore.tmpl", nil)
 }
 
 // WriteDockerignore writes the .dockerignore file
@@ -120,7 +81,11 @@ func (g *DockerfileGenerator) WriteDockerignore(path string) error {
 		path = ".dockerignore"
 	}
 
-	content := g.GenerateDockerignore()
+	content, err := g.GenerateDockerignore()
+	if err != nil {
+		return fmt.Errorf("failed to generate .dockerignore: %w", err)
+	}
+
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return fmt.Errorf("failed to write .dockerignore: %w", err)
 	}
@@ -128,9 +93,23 @@ func (g *DockerfileGenerator) WriteDockerignore(path string) error {
 	return nil
 }
 
+// EntrypointData holds data for the docker-entrypoint.sh template.
+type EntrypointData struct {
+	MaxDBWaitAttempts int
+	DBWaitInterval    int
+}
+
+// DefaultEntrypointData returns entrypoint data with default values.
+func DefaultEntrypointData() EntrypointData {
+	return EntrypointData{
+		MaxDBWaitAttempts: DefaultDBWaitMaxAttempts,
+		DBWaitInterval:    DefaultDBWaitInterval,
+	}
+}
+
 // GenerateEntrypoint generates the docker-entrypoint.sh content
 func (g *DockerfileGenerator) GenerateEntrypoint() (string, error) {
-	return g.loader.Execute("docker-entrypoint.tmpl", nil)
+	return g.loader.Execute("docker-entrypoint.tmpl", DefaultEntrypointData())
 }
 
 // WriteEntrypoint writes the docker-entrypoint.sh file

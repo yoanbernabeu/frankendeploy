@@ -6,6 +6,21 @@
 # Versions
 ###################
 FROM dunglas/frankenphp:{{ default "1" .FrankenPHPVersion }}-php{{ .PHP.Version }} AS frankenphp_upstream
+{{- if and .Assets .Assets.BuildTool (ne .Assets.BuildTool "assetmapper") }}
+
+###################
+# Node Build Stage
+###################
+FROM node:20-slim AS node_build
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --prefer-offline
+
+COPY . .
+RUN {{ .Assets.BuildCommand }}
+{{- end }}
 
 ###################
 # Base Stage
@@ -46,8 +61,8 @@ RUN set -eux; \
     ;
 
 # SECURITY: Create non-root user for running the application
-ARG UID=1000
-ARG GID=1000
+ARG UID={{ defaultUID }}
+ARG GID={{ defaultGID }}
 RUN groupadd --gid ${GID} app && \
     useradd --uid ${UID} --gid ${GID} --create-home --shell /bin/bash app && \
     mkdir -p /app/var /data /config && \
@@ -73,7 +88,7 @@ EOF
 COPY --link --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint
 
 ENTRYPOINT ["docker-entrypoint"]
-HEALTHCHECK --start-period=60s CMD curl -f http://localhost:2019/metrics || exit 1
+HEALTHCHECK --start-period=60s CMD curl -f http://localhost:{{ metricsPort }}/metrics || exit 1
 CMD ["frankenphp", "run", "--config", "/etc/caddy/Caddyfile"]
 
 ###################
@@ -137,10 +152,8 @@ RUN set -eux; \
     php bin/console importmap:install --no-interaction; \
     php bin/console asset-map:compile --no-interaction
 {{- else }}
-# Webpack/Vite: install Node.js and build
-RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm && \
-    {{ .Assets.BuildCommand }} && \
-    apt-get purge -y nodejs npm && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+# Webpack/Vite: copy pre-built assets from node_build stage
+COPY --from=node_build /app/public/build public/build
 {{- end }}
 {{- end }}
 

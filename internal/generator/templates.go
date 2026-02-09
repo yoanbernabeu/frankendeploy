@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"sync"
 	"text/template"
 )
 
@@ -12,6 +13,7 @@ var templatesFS embed.FS
 
 // TemplateLoader handles loading and executing embedded templates
 type TemplateLoader struct {
+	mu        sync.RWMutex
 	templates map[string]*template.Template
 }
 
@@ -24,6 +26,18 @@ func NewTemplateLoader() *TemplateLoader {
 
 // LoadTemplate loads a template from the embedded filesystem
 func (l *TemplateLoader) LoadTemplate(name string) (*template.Template, error) {
+	// Fast path: read lock for cache hit
+	l.mu.RLock()
+	if tmpl, ok := l.templates[name]; ok {
+		l.mu.RUnlock()
+		return tmpl, nil
+	}
+	l.mu.RUnlock()
+
+	// Slow path: write lock with double-check
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	if tmpl, ok := l.templates[name]; ok {
 		return tmpl, nil
 	}
@@ -84,5 +98,11 @@ func templateFuncs() template.FuncMap {
 			}
 			return val
 		},
+		"appPort":     func() string { return AppPort },
+		"metricsPort": func() string { return MetricsPort },
+		"devPort":     func() string { return DevExternalPort },
+		"defaultUID":  func() string { return DefaultUID },
+		"defaultGID":  func() string { return DefaultGID },
+		"networkName": func() string { return NetworkName },
 	}
 }

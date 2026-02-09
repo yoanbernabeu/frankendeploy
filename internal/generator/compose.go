@@ -23,40 +23,52 @@ func NewComposeGenerator(cfg *config.ProjectConfig) *ComposeGenerator {
 
 // ComposeData holds data for docker-compose templates
 type ComposeData struct {
-	Name         string
-	ImageName    string
-	PHP          config.PHPConfig
-	Database     config.DatabaseConfig
-	DatabaseURL  string
-	Assets       config.AssetsConfig
-	Deploy       config.DeployConfig
-	Env          config.EnvConfig
-	HasMailer    bool
-	HasMessenger bool
+	Name          string
+	ImageName     string
+	PHP           config.PHPConfig
+	Database      config.DatabaseConfig
+	DatabaseURL   string
+	Assets        config.AssetsConfig
+	Deploy        config.DeployConfig
+	Env           config.EnvConfig
+	HasMailer     bool
+	HasMessenger  bool
+	DevDBUser     string
+	DevDBPassword string
+	DevDBName     string
 }
 
 // GenerateDev generates docker-compose.yaml for development
 func (g *ComposeGenerator) GenerateDev() (string, error) {
 	data := g.buildComposeData()
+	if err := ValidateComposeData(data); err != nil {
+		return "", fmt.Errorf("validation failed: %w", err)
+	}
 	return g.loader.Execute("compose-dev.tmpl", data)
 }
 
 // GenerateProd generates docker-compose.prod.yaml for production
 func (g *ComposeGenerator) GenerateProd() (string, error) {
 	data := g.buildComposeData()
+	if err := ValidateComposeData(data); err != nil {
+		return "", fmt.Errorf("validation failed: %w", err)
+	}
 	return g.loader.Execute("compose-prod.tmpl", data)
 }
 
 // buildComposeData builds the data for compose templates
 func (g *ComposeGenerator) buildComposeData() ComposeData {
 	data := ComposeData{
-		Name:      g.config.Name,
-		ImageName: g.config.Name,
-		PHP:       g.config.PHP,
-		Database:  g.config.Database,
-		Assets:    g.config.Assets,
-		Deploy:    g.config.Deploy,
-		Env:       g.config.Env,
+		Name:          g.config.Name,
+		ImageName:     g.config.Name,
+		PHP:           g.config.PHP,
+		Database:      g.config.Database,
+		Assets:        g.config.Assets,
+		Deploy:        g.config.Deploy,
+		Env:           g.config.Env,
+		DevDBUser:     DefaultDevDBUser,
+		DevDBPassword: DefaultDevDBPassword,
+		DevDBName:     DefaultDevDBName,
 	}
 
 	// Generate DATABASE_URL for dev
@@ -67,18 +79,25 @@ func (g *ComposeGenerator) buildComposeData() ComposeData {
 
 // buildDatabaseURL builds the database URL for docker-compose
 func (g *ComposeGenerator) buildDatabaseURL() string {
-	switch g.config.Database.Driver {
-	case "pgsql":
-		return fmt.Sprintf("postgresql://app:app@database:5432/app?serverVersion=%s&charset=utf8",
-			g.config.Database.Version)
-	case "mysql":
-		return fmt.Sprintf("mysql://app:app@database:3306/app?serverVersion=%s&charset=utf8mb4",
-			g.config.Database.Version)
-	case "sqlite":
+	driver := g.config.Database.Driver
+
+	if driver == "sqlite" {
 		return "sqlite:///%kernel.project_dir%/var/data.db"
-	default:
+	}
+
+	info, err := GetDBDriverInfo(driver)
+	if err != nil {
 		return ""
 	}
+
+	return fmt.Sprintf("%s://%s:%s@database:%s/%s?serverVersion=%s&charset=%s",
+		info.URLScheme,
+		DefaultDevDBUser, DefaultDevDBPassword,
+		info.Port,
+		DefaultDevDBName,
+		g.config.Database.Version,
+		info.URLCharset,
+	)
 }
 
 // WriteDevCompose writes compose.yaml for development

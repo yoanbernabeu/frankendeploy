@@ -8,9 +8,9 @@ services:
       dockerfile: Dockerfile
       target: frankenphp_dev
     # SECURITY: Run as non-root user
-    user: "1000:1000"
+    user: "{{ defaultUID }}:{{ defaultGID }}"
     ports:
-      - "8000:8080"
+      - "{{ devPort }}:{{ appPort }}"
       - "443:443"
       - "443:443/udp"
     volumes:
@@ -19,8 +19,8 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     environment:
-      # SECURITY: Use non-privileged port 8080 for non-root execution
-      SERVER_NAME: "${SERVER_NAME:-{{ if .Deploy.Domain }}{{ .Deploy.Domain }}{{ else }}localhost{{ end }}, :8080}"
+      # SECURITY: Use non-privileged port {{ appPort }} for non-root execution
+      SERVER_NAME: "${SERVER_NAME:-{{ if .Deploy.Domain }}{{ .Deploy.Domain }}{{ else }}localhost{{ end }}, :{{ appPort }}}"
       APP_ENV: dev
       APP_DEBUG: "1"
 {{- if .Database.Driver }}
@@ -47,15 +47,15 @@ services:
   database:
     image: postgres:{{ .Database.Version }}-alpine
     environment:
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-      POSTGRES_DB: app
+      POSTGRES_USER: {{ .DevDBUser }}
+      POSTGRES_PASSWORD: {{ .DevDBPassword }}
+      POSTGRES_DB: {{ .DevDBName }}
     ports:
       - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      test: ["CMD-SHELL", "pg_isready -U {{ .DevDBUser }} -d {{ .DevDBName }}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -67,9 +67,9 @@ services:
     image: mysql:{{ .Database.Version }}
     environment:
       MYSQL_ROOT_PASSWORD: root
-      MYSQL_USER: app
-      MYSQL_PASSWORD: app
-      MYSQL_DATABASE: app
+      MYSQL_USER: {{ .DevDBUser }}
+      MYSQL_PASSWORD: {{ .DevDBPassword }}
+      MYSQL_DATABASE: {{ .DevDBName }}
     ports:
       - "3306:3306"
     volumes:
@@ -98,8 +98,8 @@ services:
       - "5672:5672"
       - "15672:15672"
     environment:
-      RABBITMQ_DEFAULT_USER: app
-      RABBITMQ_DEFAULT_PASS: app
+      RABBITMQ_DEFAULT_USER: {{ .DevDBUser }}
+      RABBITMQ_DEFAULT_PASS: {{ .DevDBPassword }}
 {{- end }}
 
 volumes:

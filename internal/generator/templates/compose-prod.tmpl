@@ -11,13 +11,13 @@ services:
       target: frankenphp_prod
     restart: unless-stopped
     # SECURITY: Run as non-root user
-    user: "1000:1000"
+    user: "{{ defaultUID }}:{{ defaultGID }}"
     # No public ports - Caddy front proxy handles external traffic
-    # SECURITY: Use non-privileged port 8080 for non-root execution
+    # SECURITY: Use non-privileged port {{ appPort }} for non-root execution
     expose:
-      - "8080"
+      - "{{ appPort }}"
     environment:
-      SERVER_NAME: ":8080"
+      SERVER_NAME: ":{{ appPort }}"
       APP_ENV: prod
       APP_DEBUG: "0"
 {{- if .Env.Prod }}
@@ -26,7 +26,7 @@ services:
 {{- end }}
 {{- end }}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:2019/metrics"]
+      test: ["CMD", "curl", "-f", "http://localhost:{{ metricsPort }}/metrics"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -38,8 +38,8 @@ services:
       - "app.domain={{ .Deploy.Domain }}"
 {{- end }}
     networks:
-      - frankendeploy
+      - {{ networkName }}
 
 networks:
-  frankendeploy:
+  {{ networkName }}:
     external: true
