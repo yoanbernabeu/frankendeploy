@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -184,7 +185,8 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 
 	// Write back
 	newContent := buildEnvContent(envVars)
-	writeCmd := fmt.Sprintf("cat > %s << 'ENVEOF'\n%sENVEOF", envFile, newContent)
+	delim := security.GenerateHeredocDelimiter("ENVEOF")
+	writeCmd := fmt.Sprintf("cat > %s << '%s'\n%s%s", envFile, delim, newContent, delim)
 	if _, err := client.Exec(writeCmd); err != nil {
 		return fmt.Errorf("failed to write env file: %w", err)
 	}
@@ -305,7 +307,8 @@ func runEnvRemove(cmd *cobra.Command, args []string) error {
 	delete(envVars, key)
 
 	newContent := buildEnvContent(envVars)
-	writeCmd := fmt.Sprintf("cat > %s << 'ENVEOF'\n%sENVEOF", envFile, newContent)
+	delim := security.GenerateHeredocDelimiter("ENVEOF")
+	writeCmd := fmt.Sprintf("cat > %s << '%s'\n%s%s", envFile, delim, newContent, delim)
 	if _, err := client.Exec(writeCmd); err != nil {
 		return fmt.Errorf("failed to write env file: %w", err)
 	}
@@ -321,6 +324,25 @@ func runEnvPush(cmd *cobra.Command, args []string) error {
 	// Validate server name
 	if err := security.ValidateServerName(serverName); err != nil {
 		return fmt.Errorf("invalid server name: %w", err)
+	}
+
+	// Validate local file: must be a .env file
+	baseName := filepath.Base(localFile)
+	if !strings.HasPrefix(baseName, ".env") {
+		return fmt.Errorf("only .env files can be pushed (got: %s)", baseName)
+	}
+
+	// Validate local file is within the current working directory
+	absLocalFile, err := filepath.Abs(localFile)
+	if err != nil {
+		return fmt.Errorf("failed to resolve file path: %w", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get working directory: %w", err)
+	}
+	if !strings.HasPrefix(absLocalFile, cwd+string(filepath.Separator)) && absLocalFile != cwd {
+		return fmt.Errorf("file must be within the project directory")
 	}
 
 	// Read local file
@@ -353,7 +375,8 @@ func runEnvPush(cmd *cobra.Command, args []string) error {
 
 	// Write merged content
 	mergedContent := buildEnvContent(existingVars)
-	writeCmd := fmt.Sprintf("cat > %s << 'ENVEOF'\n%sENVEOF", envFile, mergedContent)
+	delim := security.GenerateHeredocDelimiter("ENVEOF")
+	writeCmd := fmt.Sprintf("cat > %s << '%s'\n%s%s", envFile, delim, mergedContent, delim)
 	if _, err := client.Exec(writeCmd); err != nil {
 		return fmt.Errorf("failed to write env file: %w", err)
 	}

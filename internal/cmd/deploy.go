@@ -92,6 +92,11 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	// Generate tag if not provided
 	if deployTag == "" {
 		deployTag = time.Now().Format("20060102-150405")
+	} else {
+		// Validate user-provided tag
+		if err := security.ValidateRelease(deployTag); err != nil {
+			return fmt.Errorf("invalid deploy tag: %w", err)
+		}
 	}
 
 	imageName := fmt.Sprintf("%s:%s", projectCfg.Name, deployTag)
@@ -406,7 +411,7 @@ func deployNewVersion(client *ssh.Client, cfg *config.ProjectConfig, imageName, 
 
 	// Execute directory creation commands first
 	for _, command := range commands {
-		PrintVerbose("Running: %s", command)
+		PrintVerboseCommand(command)
 		result, err := client.Exec(command)
 		if err != nil {
 			return fmt.Errorf("command failed: %w", err)
@@ -434,7 +439,7 @@ func deployNewVersion(client *ssh.Client, cfg *config.ProjectConfig, imageName, 
 	// Build environment variables
 	envVars := "-e SERVER_NAME=:8080 -e APP_ENV=prod -e APP_DEBUG=0"
 	if databaseURL != "" {
-		envVars += fmt.Sprintf(" -e DATABASE_URL='%s'", databaseURL)
+		envVars += fmt.Sprintf(" -e DATABASE_URL=%s", security.ShellEscape(databaseURL))
 	}
 
 	// Start new container with all shared volumes mounted
@@ -456,7 +461,7 @@ func deployNewVersion(client *ssh.Client, cfg *config.ProjectConfig, imageName, 
 	)
 
 	for _, command := range commands {
-		PrintVerbose("Running: %s", command)
+		PrintVerboseCommand(command)
 		result, err := client.Exec(command)
 		if err != nil {
 			return fmt.Errorf("command failed: %w", err)
@@ -497,14 +502,14 @@ func buildVolumeMounts(sharedPath string, sharedDirs, sharedFiles []string) stri
 func fixSharedPermissions(client *ssh.Client, sharedPath string, sharedDirs, sharedFiles []string) {
 	// Fix ownership of shared directory itself
 	cmd := fmt.Sprintf("sudo chown 1000:1000 %s 2>/dev/null || true", sharedPath)
-	PrintVerbose("Running: %s", cmd)
+	PrintVerboseCommand(cmd)
 	_, _ = client.Exec(cmd)
 
 	// Fix ownership of shared directories (recursively for contents)
 	for _, dir := range sharedDirs {
 		dirPath := fmt.Sprintf("%s/%s", sharedPath, dir)
 		cmd := fmt.Sprintf("sudo chown -R 1000:1000 %s 2>/dev/null || true", dirPath)
-		PrintVerbose("Running: %s", cmd)
+		PrintVerboseCommand(cmd)
 		result, _ := client.Exec(cmd)
 		if result != nil && result.ExitCode != 0 {
 			PrintWarning("Could not fix permissions for %s (may require manual sudo)", dir)
@@ -516,13 +521,13 @@ func fixSharedPermissions(client *ssh.Client, sharedPath string, sharedDirs, sha
 		filePath := fmt.Sprintf("%s/%s", sharedPath, file)
 		// Set ownership
 		cmd := fmt.Sprintf("sudo chown 1000:1000 %s 2>/dev/null || true", filePath)
-		PrintVerbose("Running: %s", cmd)
+		PrintVerboseCommand(cmd)
 		_, _ = client.Exec(cmd)
 
 		// Set restrictive permissions for .env files (contains secrets)
 		if strings.HasPrefix(file, ".env") || strings.Contains(file, "/.env") {
 			cmd = fmt.Sprintf("sudo chmod 600 %s 2>/dev/null || true", filePath)
-			PrintVerbose("Running: %s", cmd)
+			PrintVerboseCommand(cmd)
 			_, _ = client.Exec(cmd)
 		}
 	}
@@ -607,7 +612,7 @@ func updateCaddyConfig(client *ssh.Client, cfg *config.ProjectConfig) error {
 	// Write config and reload Caddy
 	commands := caddy.WriteAppConfigCommands(cfg.Name, configContent)
 	for _, command := range commands {
-		PrintVerbose("Running: %s", command)
+		PrintVerboseCommand(command)
 		result, err := client.Exec(command)
 		if err != nil {
 			return fmt.Errorf("command failed: %w", err)
@@ -637,6 +642,10 @@ func cleanupOldReleases(client *ssh.Client, appPath string, keepReleases int) {
 // runDeployHooks executes deployment hooks inside the container
 func runDeployHooks(client *ssh.Client, containerName string, hooks []string) error {
 	for _, hook := range hooks {
+		// Validate hook command before execution
+		if err := security.ValidateDockerCommand(hook); err != nil {
+			return fmt.Errorf("invalid hook command %q: %w", hook, err)
+		}
 		PrintVerbose("  > %s", hook)
 		// Execute hook inside the container
 		cmd := fmt.Sprintf("docker exec %s %s", containerName, hook)
@@ -683,7 +692,7 @@ func deployMessengerWorkers(client *ssh.Client, cfg *config.ProjectConfig, image
 	// Build environment variables
 	envVars := "-e APP_ENV=prod -e APP_DEBUG=0"
 	if databaseURL != "" {
-		envVars += fmt.Sprintf(" -e DATABASE_URL='%s'", databaseURL)
+		envVars += fmt.Sprintf(" -e DATABASE_URL=%s", security.ShellEscape(databaseURL))
 	}
 
 	// Stop existing workers
@@ -753,7 +762,8 @@ func deployManagedDatabase(client *ssh.Client, cfg *config.ProjectConfig, appPat
 			version = "16"
 		}
 		dockerImage = fmt.Sprintf("postgres:%s-alpine", version)
-		dockerEnv = fmt.Sprintf("-e POSTGRES_USER=%s -e POSTGRES_PASSWORD=%s -e POSTGRES_DB=%s", dbUser, dbPassword, dbName)
+		dockerEnv = fmt.Sprintf("-e POSTGRES_USER=%s -e POSTGRES_PASSWORD=%s -e POSTGRES_DB=%s",
+			security.ShellEscape(dbUser), security.ShellEscape(dbPassword), security.ShellEscape(dbName))
 		dockerPort = "5432"
 		databaseURL = fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?serverVersion=%s&charset=utf8",
 			dbUser, dbPassword, dbContainerName, dockerPort, dbName, version)
@@ -765,7 +775,7 @@ func deployManagedDatabase(client *ssh.Client, cfg *config.ProjectConfig, appPat
 		}
 		dockerImage = fmt.Sprintf("mysql:%s", version)
 		dockerEnv = fmt.Sprintf("-e MYSQL_ROOT_PASSWORD=%s -e MYSQL_USER=%s -e MYSQL_PASSWORD=%s -e MYSQL_DATABASE=%s",
-			dbPassword, dbUser, dbPassword, dbName)
+			security.ShellEscape(dbPassword), security.ShellEscape(dbUser), security.ShellEscape(dbPassword), security.ShellEscape(dbName))
 		dockerPort = "3306"
 		databaseURL = fmt.Sprintf("mysql://%s:%s@%s:%s/%s?serverVersion=%s&charset=utf8mb4",
 			dbUser, dbPassword, dbContainerName, dockerPort, dbName, version)
@@ -800,7 +810,7 @@ func deployManagedDatabase(client *ssh.Client, cfg *config.ProjectConfig, appPat
 	}
 
 	// Save credentials to file
-	_, _ = client.Exec(fmt.Sprintf("echo '%s' > %s", databaseURL, credentialsFile))
+	_, _ = client.Exec(fmt.Sprintf("echo %s > %s", security.ShellEscape(databaseURL), credentialsFile))
 	_, _ = client.Exec(fmt.Sprintf("chmod 600 %s", credentialsFile))
 
 	// Wait for database to be ready
@@ -808,9 +818,10 @@ func deployManagedDatabase(client *ssh.Client, cfg *config.ProjectConfig, appPat
 	for i := 0; i < 30; i++ {
 		var checkCmd string
 		if cfg.Database.Driver == "pgsql" {
-			checkCmd = fmt.Sprintf("docker exec %s pg_isready -U %s", dbContainerName, dbUser)
+			checkCmd = fmt.Sprintf("docker exec %s pg_isready -U %s", dbContainerName, security.ShellEscape(dbUser))
 		} else {
-			checkCmd = fmt.Sprintf("docker exec %s mysqladmin ping -u%s -p%s --silent", dbContainerName, dbUser, dbPassword)
+			checkCmd = fmt.Sprintf("docker exec %s mysqladmin ping -u%s -p%s --silent",
+				dbContainerName, security.ShellEscape(dbUser), security.ShellEscape(dbPassword))
 		}
 		result, _ := client.Exec(checkCmd)
 		if result.ExitCode == 0 {

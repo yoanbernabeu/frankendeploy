@@ -1,6 +1,8 @@
 package security
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -44,6 +46,18 @@ var (
 	// envKeyRegex validates environment variable keys
 	// Standard environment variable naming
 	envKeyRegex = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+	// sharedDirRegex validates shared directory paths
+	// Allows: alphanumeric, underscores, hyphens, dots, forward slashes (no ..)
+	sharedDirRegex = regexp.MustCompile(`^[a-zA-Z0-9_.-]+(/[a-zA-Z0-9_.-]+)*$`)
+
+	// sensitivePatterns used by SanitizeCommandForLog to mask secrets
+	sensitiveLogPatterns = []string{
+		"DATABASE_URL=",
+		"POSTGRES_PASSWORD=",
+		"MYSQL_PASSWORD=",
+		"MYSQL_ROOT_PASSWORD=",
+	}
 )
 
 // ValidateAppName validates an application name
@@ -205,4 +219,154 @@ func ValidateDockerCommand(command string) error {
 	}
 
 	return nil
+}
+
+// ShellEscape escapes a string for safe use in shell commands by wrapping it
+// in single quotes and escaping any internal single quotes using the POSIX
+// pattern: ' → '\''
+func ShellEscape(s string) string {
+	// Replace single quotes with the POSIX escape sequence: end quote, escaped quote, start quote
+	escaped := strings.ReplaceAll(s, "'", "'\\''")
+	return "'" + escaped + "'"
+}
+
+// ValidateHook validates a deployment hook command.
+// Hooks are executed inside a Docker container via docker exec, so they must
+// not contain shell metacharacters that could break out of the intended command.
+func ValidateHook(hook string) error {
+	if hook == "" {
+		return fmt.Errorf("hook command cannot be empty")
+	}
+	return ValidateDockerCommand(hook)
+}
+
+// ValidateSharedDir validates a shared directory path.
+// Shared dirs must be relative paths without parent traversal.
+func ValidateSharedDir(dir string) error {
+	if dir == "" {
+		return fmt.Errorf("shared directory cannot be empty")
+	}
+
+	// Must be relative (no leading /)
+	if strings.HasPrefix(dir, "/") {
+		return fmt.Errorf("shared directory must be a relative path, got: %s", dir)
+	}
+
+	// No parent traversal
+	if strings.Contains(dir, "..") {
+		return fmt.Errorf("shared directory cannot contain path traversal (..): %s", dir)
+	}
+
+	// Only safe characters
+	if !sharedDirRegex.MatchString(dir) {
+		return fmt.Errorf("shared directory contains invalid characters: %s", dir)
+	}
+
+	return nil
+}
+
+// GenerateHeredocDelimiter generates a unique heredoc delimiter to prevent
+// heredoc injection attacks. Uses crypto/rand for unpredictability.
+func GenerateHeredocDelimiter(prefix string) string {
+	bytes := make([]byte, 16)
+	_, _ = rand.Read(bytes)
+	return prefix + "_" + hex.EncodeToString(bytes)
+}
+
+// SanitizeCommandForLog masks sensitive values in commands before logging.
+// This prevents secrets from leaking into verbose output or log files.
+func SanitizeCommandForLog(cmd string) string {
+	result := cmd
+
+	// Mask sensitive environment variable values
+	for _, pattern := range sensitiveLogPatterns {
+		searchFrom := 0
+		for {
+			idx := strings.Index(result[searchFrom:], pattern)
+			if idx == -1 {
+				break
+			}
+			absIdx := searchFrom + idx
+			// Find the end of the value (next space or end of string)
+			valueStart := absIdx + len(pattern)
+			valueEnd := findValueEnd(result, valueStart)
+			masked := "****"
+			result = result[:valueStart] + masked + result[valueEnd:]
+			// Advance past the replacement to avoid infinite loop
+			searchFrom = valueStart + len(masked)
+		}
+	}
+
+	// Mask -p<password> pattern (MySQL password flag)
+	result = maskMySQLPasswordFlag(result)
+
+	return result
+}
+
+// findValueEnd finds where a shell value ends (handles quoted and unquoted values)
+func findValueEnd(s string, start int) int {
+	if start >= len(s) {
+		return start
+	}
+
+	// Handle single-quoted value
+	if s[start] == '\'' {
+		end := strings.Index(s[start+1:], "'")
+		if end == -1 {
+			return len(s)
+		}
+		return start + end + 2
+	}
+
+	// Handle double-quoted value
+	if s[start] == '"' {
+		end := strings.Index(s[start+1:], "\"")
+		if end == -1 {
+			return len(s)
+		}
+		return start + end + 2
+	}
+
+	// Unquoted: find next whitespace
+	for i := start; i < len(s); i++ {
+		if s[i] == ' ' || s[i] == '\t' || s[i] == '\n' {
+			return i
+		}
+	}
+	return len(s)
+}
+
+// maskMySQLPasswordFlag masks -p<password> patterns in commands
+func maskMySQLPasswordFlag(cmd string) string {
+	// Match -p followed by non-space characters (the password)
+	result := cmd
+	for {
+		idx := strings.Index(result, "-p")
+		if idx == -1 {
+			break
+		}
+		// Check it's actually a password flag, not -port or similar
+		afterP := idx + 2
+		if afterP >= len(result) {
+			break
+		}
+		// -p followed by a space means separate argument, skip
+		if result[afterP] == ' ' || result[afterP] == '-' {
+			// Move past this -p to avoid infinite loop
+			nextSpace := strings.IndexByte(result[afterP:], ' ')
+			if nextSpace == -1 {
+				break
+			}
+			idx = afterP + nextSpace
+			continue
+		}
+		// Find end of password value
+		valueEnd := afterP
+		for valueEnd < len(result) && result[valueEnd] != ' ' && result[valueEnd] != '\t' {
+			valueEnd++
+		}
+		result = result[:afterP] + "****" + result[valueEnd:]
+		break // Only mask the first occurrence to avoid infinite loops
+	}
+	return result
 }

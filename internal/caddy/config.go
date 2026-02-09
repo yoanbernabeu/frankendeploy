@@ -6,6 +6,7 @@ import (
 	"text/template"
 
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
+	"github.com/yoanbernabeu/frankendeploy/internal/security"
 )
 
 // ConfigGenerator generates Caddy configuration files
@@ -124,13 +125,12 @@ func ReloadCommandsFallback() []string {
 
 // WriteAppConfigCommands returns SSH commands to write app config and reload
 func WriteAppConfigCommands(appName, configContent string) []string {
+	delim := security.GenerateHeredocDelimiter("CADDYEOF")
 	return []string{
 		// Ensure directory exists
 		`mkdir -p /opt/frankendeploy/caddy/apps`,
-		// Write config file (escaped for shell)
-		fmt.Sprintf(`cat > /opt/frankendeploy/caddy/apps/%s.caddy << 'CADDYEOF'
-%s
-CADDYEOF`, appName, configContent),
+		// Write config file (escaped for shell with random heredoc delimiter)
+		fmt.Sprintf("cat > /opt/frankendeploy/caddy/apps/%s.caddy << '%s'\n%s\n%s", appName, delim, configContent, delim),
 		// Reload Caddy inside container
 		`docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile`,
 	}

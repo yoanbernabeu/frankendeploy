@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
+	"github.com/yoanbernabeu/frankendeploy/internal/security"
 	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
 )
 
@@ -155,7 +156,8 @@ func SaveGeneratedSecrets(client *ssh.Client, appName string, secrets map[string
 
 	// Write back
 	newContent := buildEnvContent(existingVars)
-	writeCmd := fmt.Sprintf("cat > %s << 'ENVEOF'\n%sENVEOF", envFile, newContent)
+	delim := security.GenerateHeredocDelimiter("ENVEOF")
+	writeCmd := fmt.Sprintf("cat > %s << '%s'\n%s%s", envFile, delim, newContent, delim)
 	if _, err := client.Exec(writeCmd); err != nil {
 		return fmt.Errorf("failed to write env file: %w", err)
 	}

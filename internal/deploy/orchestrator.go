@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
+	"github.com/yoanbernabeu/frankendeploy/internal/security"
 	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
 )
 
@@ -22,13 +23,16 @@ type Orchestrator struct {
 }
 
 // NewOrchestrator creates a new deployment orchestrator
-func NewOrchestrator(client *ssh.Client, cfg *config.ProjectConfig, server *config.ServerConfig) *Orchestrator {
+func NewOrchestrator(client *ssh.Client, cfg *config.ProjectConfig, server *config.ServerConfig) (*Orchestrator, error) {
+	if err := security.ValidateAppName(cfg.Name); err != nil {
+		return nil, fmt.Errorf("invalid app name: %w", err)
+	}
 	return &Orchestrator{
 		client:   client,
 		config:   cfg,
 		server:   server,
 		basePath: filepath.Join("/opt/frankendeploy/apps", cfg.Name),
-	}
+	}, nil
 }
 
 // SetTag sets the deployment tag
@@ -125,6 +129,9 @@ func (o *Orchestrator) prepareDirectories(releasePath, sharedPath string) error 
 
 	// Create shared directories
 	for _, dir := range o.config.Deploy.SharedDirs {
+		if err := security.ValidateSharedDir(dir); err != nil {
+			return fmt.Errorf("invalid shared directory %q: %w", dir, err)
+		}
 		commands = append(commands, fmt.Sprintf("mkdir -p %s/%s", sharedPath, dir))
 	}
 
@@ -172,7 +179,7 @@ func (o *Orchestrator) startContainer(imageName string) error {
 	}
 
 	for key, value := range o.config.Env.Prod {
-		envVars = append(envVars, fmt.Sprintf("-e %s=%s", key, value))
+		envVars = append(envVars, fmt.Sprintf("-e %s=%s", key, security.ShellEscape(value)))
 	}
 
 	// Mount shared .env.local for runtime environment variables
@@ -238,6 +245,9 @@ func (o *Orchestrator) activateRelease(releasePath, currentPath string) error {
 
 func (o *Orchestrator) runHooks(hooks []string) error {
 	for _, hook := range hooks {
+		if err := security.ValidateDockerCommand(hook); err != nil {
+			return fmt.Errorf("invalid hook command %q: %w", hook, err)
+		}
 		cmd := fmt.Sprintf("docker exec %s %s", o.config.Name, hook)
 		result, err := o.client.Exec(cmd)
 		if err != nil {

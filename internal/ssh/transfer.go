@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/yoanbernabeu/frankendeploy/internal/security"
 )
 
 // UploadFile uploads a local file to the remote server
@@ -32,7 +34,7 @@ func (c *Client) UploadFile(localPath, remotePath string) error {
 
 	// Create remote directory if needed
 	remoteDir := filepath.Dir(remotePath)
-	if _, err := c.Exec(fmt.Sprintf("mkdir -p %s", remoteDir)); err != nil {
+	if _, err := c.Exec(fmt.Sprintf("mkdir -p %s", security.ShellEscape(remoteDir))); err != nil {
 		return fmt.Errorf("failed to create remote directory: %w", err)
 	}
 
@@ -53,7 +55,7 @@ func (c *Client) UploadFile(localPath, remotePath string) error {
 	}()
 
 	// Run scp
-	if err := session.Run(fmt.Sprintf("scp -t %s", remotePath)); err != nil {
+	if err := session.Run(fmt.Sprintf("scp -t %s", security.ShellEscape(remotePath))); err != nil {
 		return fmt.Errorf("scp failed: %w", err)
 	}
 
@@ -68,7 +70,7 @@ func (c *Client) UploadContent(content, remotePath string) error {
 
 	// Use base64 decoding on the remote side
 	cmd := fmt.Sprintf("mkdir -p %s && echo '%s' | base64 -d > %s",
-		filepath.Dir(remotePath), base64Content, remotePath)
+		security.ShellEscape(filepath.Dir(remotePath)), base64Content, security.ShellEscape(remotePath))
 
 	result, err := c.Exec(cmd)
 	if err != nil {
@@ -91,7 +93,7 @@ func (c *Client) DownloadFile(remotePath, localPath string) error {
 	}
 
 	// Read remote file content
-	result, err := c.Exec(fmt.Sprintf("cat %s", remotePath))
+	result, err := c.Exec(fmt.Sprintf("cat %s", security.ShellEscape(remotePath)))
 	if err != nil {
 		return fmt.Errorf("failed to read remote file: %w", err)
 	}
@@ -111,7 +113,7 @@ func (c *Client) DownloadFile(remotePath, localPath string) error {
 // UploadDirectory uploads a local directory to the remote server
 func (c *Client) UploadDirectory(localDir, remoteDir string) error {
 	// Create remote directory
-	if _, err := c.Exec(fmt.Sprintf("mkdir -p %s", remoteDir)); err != nil {
+	if _, err := c.Exec(fmt.Sprintf("mkdir -p %s", security.ShellEscape(remoteDir))); err != nil {
 		return fmt.Errorf("failed to create remote directory: %w", err)
 	}
 
@@ -130,7 +132,7 @@ func (c *Client) UploadDirectory(localDir, remoteDir string) error {
 		remotePath := filepath.Join(remoteDir, relPath)
 
 		if info.IsDir() {
-			_, err := c.Exec(fmt.Sprintf("mkdir -p %s", remotePath))
+			_, err := c.Exec(fmt.Sprintf("mkdir -p %s", security.ShellEscape(remotePath)))
 			return err
 		}
 
@@ -140,7 +142,7 @@ func (c *Client) UploadDirectory(localDir, remoteDir string) error {
 
 // FileExists checks if a file exists on the remote server
 func (c *Client) FileExists(remotePath string) (bool, error) {
-	result, err := c.Exec(fmt.Sprintf("test -f %s && echo 'exists'", remotePath))
+	result, err := c.Exec(fmt.Sprintf("test -f %s && echo 'exists'", security.ShellEscape(remotePath)))
 	if err != nil {
 		return false, err
 	}
@@ -149,7 +151,7 @@ func (c *Client) FileExists(remotePath string) (bool, error) {
 
 // DirectoryExists checks if a directory exists on the remote server
 func (c *Client) DirectoryExists(remotePath string) (bool, error) {
-	result, err := c.Exec(fmt.Sprintf("test -d %s && echo 'exists'", remotePath))
+	result, err := c.Exec(fmt.Sprintf("test -d %s && echo 'exists'", security.ShellEscape(remotePath)))
 	if err != nil {
 		return false, err
 	}
@@ -158,7 +160,7 @@ func (c *Client) DirectoryExists(remotePath string) (bool, error) {
 
 // RemoveFile removes a file from the remote server
 func (c *Client) RemoveFile(remotePath string) error {
-	result, err := c.Exec(fmt.Sprintf("rm -f %s", remotePath))
+	result, err := c.Exec(fmt.Sprintf("rm -f %s", security.ShellEscape(remotePath)))
 	if err != nil {
 		return err
 	}
@@ -170,7 +172,7 @@ func (c *Client) RemoveFile(remotePath string) error {
 
 // RemoveDirectory removes a directory from the remote server
 func (c *Client) RemoveDirectory(remotePath string) error {
-	result, err := c.Exec(fmt.Sprintf("rm -rf %s", remotePath))
+	result, err := c.Exec(fmt.Sprintf("rm -rf %s", security.ShellEscape(remotePath)))
 	if err != nil {
 		return err
 	}

@@ -33,6 +33,11 @@ func runExec(cmd *cobra.Command, args []string) error {
 	serverName := args[0]
 	command := strings.Join(args[1:], " ")
 
+	// Validate command for shell injection
+	if err := security.ValidateDockerCommand(command); err != nil {
+		return fmt.Errorf("invalid command: %w", err)
+	}
+
 	// Validate server name
 	if err := security.ValidateServerName(serverName); err != nil {
 		return fmt.Errorf("invalid server name: %w", err)

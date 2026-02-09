@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/yoanbernabeu/frankendeploy/internal/security"
 )
 
 var (
@@ -102,5 +103,12 @@ func PrintWarning(msg string, args ...interface{}) {
 func PrintVerbose(msg string, args ...interface{}) {
 	if verbose {
 		fmt.Printf("   "+msg+"\n", args...)
+	}
+}
+
+// PrintVerboseCommand prints a command in verbose mode with sensitive values masked
+func PrintVerboseCommand(command string) {
+	if verbose {
+		fmt.Printf("   Running: %s\n", security.SanitizeCommandForLog(command))
 	}
 }

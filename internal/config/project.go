@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/yoanbernabeu/frankendeploy/internal/security"
 	"gopkg.in/yaml.v3"
 )
 
@@ -34,6 +35,32 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	}
 
 	config.Database.Driver = NormalizeDBDriver(config.Database.Driver)
+
+	// Validate app name
+	if config.Name != "" {
+		if err := security.ValidateAppName(config.Name); err != nil {
+			return nil, fmt.Errorf("invalid app name in config: %w", err)
+		}
+	}
+
+	// Validate deployment hooks
+	for _, hook := range config.Deploy.Hooks.PreDeploy {
+		if err := security.ValidateHook(hook); err != nil {
+			return nil, fmt.Errorf("invalid pre_deploy hook %q: %w", hook, err)
+		}
+	}
+	for _, hook := range config.Deploy.Hooks.PostDeploy {
+		if err := security.ValidateHook(hook); err != nil {
+			return nil, fmt.Errorf("invalid post_deploy hook %q: %w", hook, err)
+		}
+	}
+
+	// Validate shared directories
+	for _, dir := range config.Deploy.SharedDirs {
+		if err := security.ValidateSharedDir(dir); err != nil {
+			return nil, fmt.Errorf("invalid shared_dir %q: %w", dir, err)
+		}
+	}
 
 	return &config, nil
 }
