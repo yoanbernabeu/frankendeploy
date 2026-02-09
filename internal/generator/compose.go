@@ -2,9 +2,18 @@ package generator
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
+)
+
+// composeContext indicates whether we are generating a dev or prod compose file.
+type composeContext int
+
+const (
+	composeContextDev composeContext = iota
+	composeContextProd
 )
 
 // ComposeGenerator generates docker-compose files
@@ -40,7 +49,10 @@ type ComposeData struct {
 
 // GenerateDev generates docker-compose.yaml for development
 func (g *ComposeGenerator) GenerateDev() (string, error) {
-	data := g.buildComposeData()
+	data, err := g.buildComposeData(composeContextDev)
+	if err != nil {
+		return "", fmt.Errorf("failed to build compose data: %w", err)
+	}
 	if err := ValidateComposeData(data); err != nil {
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
@@ -49,7 +61,10 @@ func (g *ComposeGenerator) GenerateDev() (string, error) {
 
 // GenerateProd generates docker-compose.prod.yaml for production
 func (g *ComposeGenerator) GenerateProd() (string, error) {
-	data := g.buildComposeData()
+	data, err := g.buildComposeData(composeContextProd)
+	if err != nil {
+		return "", fmt.Errorf("failed to build compose data: %w", err)
+	}
 	if err := ValidateComposeData(data); err != nil {
 		return "", fmt.Errorf("validation failed: %w", err)
 	}
@@ -57,47 +72,82 @@ func (g *ComposeGenerator) GenerateProd() (string, error) {
 }
 
 // buildComposeData builds the data for compose templates
-func (g *ComposeGenerator) buildComposeData() ComposeData {
+func (g *ComposeGenerator) buildComposeData(ctx composeContext) (ComposeData, error) {
 	data := ComposeData{
-		Name:          g.config.Name,
-		ImageName:     g.config.Name,
-		PHP:           g.config.PHP,
-		Database:      g.config.Database,
-		Assets:        g.config.Assets,
-		Deploy:        g.config.Deploy,
-		Env:           g.config.Env,
-		DevDBUser:     DefaultDevDBUser,
-		DevDBPassword: DefaultDevDBPassword,
-		DevDBName:     DefaultDevDBName,
+		Name:      g.config.Name,
+		ImageName: g.config.Name,
+		PHP:       g.config.PHP,
+		Database:  g.config.Database,
+		Assets:    g.config.Assets,
+		Deploy:    g.config.Deploy,
+		Env:       g.config.Env,
 	}
 
-	// Generate DATABASE_URL for dev
-	data.DatabaseURL = g.buildDatabaseURL()
+	if ctx == composeContextDev {
+		data.DevDBUser = DefaultDevDBUser
+		data.DevDBPassword = DefaultDevDBPassword
+		data.DevDBName = DefaultDevDBName
+		data.HasMailer = g.config.Mailer.Enabled
+		data.HasMessenger = g.config.Messenger.Enabled
 
-	return data
+		if g.config.Database.Driver != "" {
+			dbURL, err := g.buildDatabaseURL()
+			if err != nil {
+				return ComposeData{}, err
+			}
+			data.DatabaseURL = dbURL
+		}
+	}
+
+	return data, nil
 }
 
 // buildDatabaseURL builds the database URL for docker-compose
-func (g *ComposeGenerator) buildDatabaseURL() string {
+func (g *ComposeGenerator) buildDatabaseURL() (string, error) {
 	driver := g.config.Database.Driver
 
+	if driver == "" {
+		return "", nil
+	}
+
 	if driver == "sqlite" {
-		return "sqlite:///%kernel.project_dir%/var/data.db"
+		path := g.config.Database.Path
+		if path == "" {
+			path = "var/data.db"
+		}
+		return fmt.Sprintf("sqlite://%%kernel.project_dir%%/%s", path), nil
 	}
 
 	info, err := GetDBDriverInfo(driver)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("cannot build DATABASE_URL: %w", err)
 	}
 
-	return fmt.Sprintf("%s://%s:%s@database:%s/%s?serverVersion=%s&charset=%s",
+	host := g.config.Database.Host
+	if host == "" {
+		host = "database"
+	}
+
+	port := fmt.Sprintf("%d", g.config.Database.Port)
+	if g.config.Database.Port == 0 {
+		port = info.Port
+	}
+
+	dbName := g.config.Database.Name
+	if dbName == "" {
+		dbName = DefaultDevDBName
+	}
+
+	version := url.QueryEscape(g.config.Database.Version)
+
+	return fmt.Sprintf("%s://%s:%s@%s:%s/%s?serverVersion=%s&charset=%s",
 		info.URLScheme,
 		DefaultDevDBUser, DefaultDevDBPassword,
-		info.Port,
-		DefaultDevDBName,
-		g.config.Database.Version,
+		host, port,
+		dbName,
+		version,
 		info.URLCharset,
-	)
+	), nil
 }
 
 // WriteDevCompose writes compose.yaml for development

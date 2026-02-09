@@ -20,9 +20,12 @@ services:
       SERVER_NAME: ":{{ appPort }}"
       APP_ENV: prod
       APP_DEBUG: "0"
+{{- if .Database.Driver }}
+      # DATABASE_URL: Set via .env.local on the server
+{{- end }}
 {{- if .Env.Prod }}
 {{- range $key, $value := .Env.Prod }}
-      {{ $key }}: "{{ $value }}"
+      {{ $key }}: "{{ yamlEscape $value }}"
 {{- end }}
 {{- end }}
     healthcheck:

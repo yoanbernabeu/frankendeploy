@@ -24,13 +24,19 @@ services:
       APP_ENV: dev
       APP_DEBUG: "1"
 {{- if .Database.Driver }}
-      DATABASE_URL: "{{ .DatabaseURL }}"
+      DATABASE_URL: "{{ yamlEscape .DatabaseURL }}"
 {{- end }}
 {{- if .Env.Dev }}
 {{- range $key, $value := .Env.Dev }}
-      {{ $key }}: "{{ $value }}"
+      {{ $key }}: "{{ yamlEscape $value }}"
 {{- end }}
 {{- end }}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:{{ metricsPort }}/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 {{- if or (eq .Database.Driver "pgsql") (eq .Database.Driver "mysql") }}
     depends_on:
 {{- if eq .Database.Driver "pgsql" }}

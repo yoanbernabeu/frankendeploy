@@ -171,7 +171,7 @@ func TestValidateComposeData_EmptyName(t *testing.T) {
 func TestValidateComposeData_UnknownDBDriver(t *testing.T) {
 	data := ComposeData{
 		Name:     "my-app",
-		Database: config.DatabaseConfig{Driver: "oracle"},
+		Database: config.DatabaseConfig{Driver: "oracle", Version: "19"},
 	}
 	if err := ValidateComposeData(data); err == nil {
 		t.Error("expected error for unknown DB driver")
@@ -185,6 +185,16 @@ func TestValidateComposeData_SQLiteIsAllowed(t *testing.T) {
 	}
 	if err := ValidateComposeData(data); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateComposeData_DBVersionRequired(t *testing.T) {
+	data := ComposeData{
+		Name:     "my-app",
+		Database: config.DatabaseConfig{Driver: "pgsql"},
+	}
+	if err := ValidateComposeData(data); err == nil {
+		t.Error("expected error for missing DB version with pgsql driver")
 	}
 }
 
@@ -497,26 +507,29 @@ func TestComposeGenerator_GenerateDev_NoDB(t *testing.T) {
 	}
 }
 
-func TestComposeGenerator_GenerateDev_WithMailer(t *testing.T) {
+func TestComposeGenerator_GenerateDev_WithMailerEnabled(t *testing.T) {
 	cfg := &config.ProjectConfig{
-		Name: "test-app",
-		PHP:  config.PHPConfig{Version: "8.3"},
+		Name:   "test-app",
+		PHP:    config.PHPConfig{Version: "8.3"},
+		Mailer: config.MailerConfig{Enabled: true},
 	}
 	gen := NewComposeGenerator(cfg)
-	gen.config.Env = config.EnvConfig{}
-	// We need to set HasMailer via the compose data; since buildComposeData doesn't set it
-	// from config, we test the template by using the generator directly
 	compose, err := gen.GenerateDev()
 	if err != nil {
 		t.Fatalf("failed to generate: %v", err)
 	}
-	// Without HasMailer, no mailhog
-	if strings.Contains(compose, "mailhog") {
-		t.Error("should not contain mailhog without HasMailer")
+	if !strings.Contains(compose, "mailhog") {
+		t.Error("should contain mailhog when Mailer is enabled")
+	}
+	if !strings.Contains(compose, "1025:1025") {
+		t.Error("should expose MailHog SMTP port")
+	}
+	if !strings.Contains(compose, "8025:8025") {
+		t.Error("should expose MailHog web UI port")
 	}
 }
 
-func TestComposeGenerator_GenerateDev_WithMessenger(t *testing.T) {
+func TestComposeGenerator_GenerateDev_WithoutMailer(t *testing.T) {
 	cfg := &config.ProjectConfig{
 		Name: "test-app",
 		PHP:  config.PHPConfig{Version: "8.3"},
@@ -526,9 +539,45 @@ func TestComposeGenerator_GenerateDev_WithMessenger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to generate: %v", err)
 	}
-	// Without HasMessenger, no rabbitmq
+	if strings.Contains(compose, "mailhog") {
+		t.Error("should not contain mailhog without Mailer enabled")
+	}
+}
+
+func TestComposeGenerator_GenerateDev_WithMessengerEnabled(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Name:      "test-app",
+		PHP:       config.PHPConfig{Version: "8.3"},
+		Messenger: config.MessengerConfig{Enabled: true},
+	}
+	gen := NewComposeGenerator(cfg)
+	compose, err := gen.GenerateDev()
+	if err != nil {
+		t.Fatalf("failed to generate: %v", err)
+	}
+	if !strings.Contains(compose, "rabbitmq") {
+		t.Error("should contain rabbitmq when Messenger is enabled")
+	}
+	if !strings.Contains(compose, "5672:5672") {
+		t.Error("should expose RabbitMQ AMQP port")
+	}
+	if !strings.Contains(compose, "15672:15672") {
+		t.Error("should expose RabbitMQ management port")
+	}
+}
+
+func TestComposeGenerator_GenerateDev_WithoutMessenger(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Name: "test-app",
+		PHP:  config.PHPConfig{Version: "8.3"},
+	}
+	gen := NewComposeGenerator(cfg)
+	compose, err := gen.GenerateDev()
+	if err != nil {
+		t.Fatalf("failed to generate: %v", err)
+	}
 	if strings.Contains(compose, "rabbitmq") {
-		t.Error("should not contain rabbitmq without HasMessenger")
+		t.Error("should not contain rabbitmq without Messenger enabled")
 	}
 }
 
@@ -547,6 +596,50 @@ func TestComposeGenerator_GenerateDev_Constants(t *testing.T) {
 	}
 	if !strings.Contains(compose, DevExternalPort+":"+AppPort) {
 		t.Error("compose-dev should use port constants")
+	}
+}
+
+func TestComposeGenerator_GenerateDev_HasHealthCheck(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Name: "test-app",
+		PHP:  config.PHPConfig{Version: "8.3"},
+	}
+	gen := NewComposeGenerator(cfg)
+	compose, err := gen.GenerateDev()
+	if err != nil {
+		t.Fatalf("failed to generate: %v", err)
+	}
+	if !strings.Contains(compose, "healthcheck:") {
+		t.Error("compose-dev should have a healthcheck for the app service")
+	}
+	if !strings.Contains(compose, "localhost:"+MetricsPort+"/metrics") {
+		t.Error("compose-dev healthcheck should use metrics port")
+	}
+}
+
+func TestComposeGenerator_GenerateDev_YAMLEscaping(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Name: "test-app",
+		PHP:  config.PHPConfig{Version: "8.3"},
+		Env: config.EnvConfig{
+			Dev: map[string]string{
+				"SOME_VAR": `value with "quotes" and \backslash`,
+			},
+		},
+	}
+	gen := NewComposeGenerator(cfg)
+	compose, err := gen.GenerateDev()
+	if err != nil {
+		t.Fatalf("failed to generate: %v", err)
+	}
+	if strings.Contains(compose, `"quotes"`) {
+		t.Error("quotes should be escaped in YAML output")
+	}
+	if !strings.Contains(compose, `\"quotes\"`) {
+		t.Error("compose-dev should escape double quotes in env vars")
+	}
+	if !strings.Contains(compose, `\\backslash`) {
+		t.Error("compose-dev should escape backslashes in env vars")
 	}
 }
 
@@ -592,6 +685,60 @@ func TestComposeGenerator_GenerateProd_NoDomain(t *testing.T) {
 	}
 	if strings.Contains(compose, "app.domain=") {
 		t.Error("compose-prod should not have app.domain label without domain config")
+	}
+}
+
+func TestComposeGenerator_GenerateProd_DatabaseComment(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Name: "test-app",
+		PHP:  config.PHPConfig{Version: "8.3"},
+		Database: config.DatabaseConfig{
+			Driver:  "pgsql",
+			Version: "16",
+		},
+	}
+	gen := NewComposeGenerator(cfg)
+	compose, err := gen.GenerateProd()
+	if err != nil {
+		t.Fatalf("failed to generate: %v", err)
+	}
+	if !strings.Contains(compose, "# DATABASE_URL: Set via .env.local on the server") {
+		t.Error("compose-prod should contain DATABASE_URL comment when DB is configured")
+	}
+}
+
+func TestComposeGenerator_GenerateProd_NoDatabaseComment(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Name: "test-app",
+		PHP:  config.PHPConfig{Version: "8.3"},
+	}
+	gen := NewComposeGenerator(cfg)
+	compose, err := gen.GenerateProd()
+	if err != nil {
+		t.Fatalf("failed to generate: %v", err)
+	}
+	if strings.Contains(compose, "DATABASE_URL") {
+		t.Error("compose-prod should not contain DATABASE_URL comment without DB config")
+	}
+}
+
+func TestComposeGenerator_GenerateProd_YAMLEscaping(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Name: "test-app",
+		PHP:  config.PHPConfig{Version: "8.3"},
+		Env: config.EnvConfig{
+			Prod: map[string]string{
+				"SOME_VAR": `value with "quotes"`,
+			},
+		},
+	}
+	gen := NewComposeGenerator(cfg)
+	compose, err := gen.GenerateProd()
+	if err != nil {
+		t.Fatalf("failed to generate: %v", err)
+	}
+	if !strings.Contains(compose, `\"quotes\"`) {
+		t.Error("compose-prod should escape double quotes in env vars")
 	}
 }
 
@@ -710,11 +857,12 @@ func TestIsContainerizedDriver(t *testing.T) {
 func TestComposeGenerator_BuildDatabaseURL(t *testing.T) {
 	tests := []struct {
 		driver   string
+		version  string
 		expected string
 	}{
-		{"pgsql", "postgresql://"},
-		{"mysql", "mysql://"},
-		{"sqlite", "sqlite://"},
+		{"pgsql", "16", "postgresql://"},
+		{"mysql", "8.0", "mysql://"},
+		{"sqlite", "", "sqlite://"},
 	}
 
 	for _, tt := range tests {
@@ -722,11 +870,14 @@ func TestComposeGenerator_BuildDatabaseURL(t *testing.T) {
 			cfg := &config.ProjectConfig{
 				Database: config.DatabaseConfig{
 					Driver:  tt.driver,
-					Version: "16",
+					Version: tt.version,
 				},
 			}
 			gen := NewComposeGenerator(cfg)
-			url := gen.buildDatabaseURL()
+			url, err := gen.buildDatabaseURL()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if !strings.HasPrefix(url, tt.expected) {
 				t.Errorf("buildDatabaseURL() for %s should start with %q, got %q", tt.driver, tt.expected, url)
 			}
@@ -737,7 +888,10 @@ func TestComposeGenerator_BuildDatabaseURL(t *testing.T) {
 func TestComposeGenerator_BuildDatabaseURL_EmptyDriver(t *testing.T) {
 	cfg := &config.ProjectConfig{}
 	gen := NewComposeGenerator(cfg)
-	url := gen.buildDatabaseURL()
+	url, err := gen.buildDatabaseURL()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if url != "" {
 		t.Errorf("empty driver should return empty URL, got %q", url)
 	}
@@ -751,9 +905,134 @@ func TestComposeGenerator_BuildDatabaseURL_ContainsCredentials(t *testing.T) {
 		},
 	}
 	gen := NewComposeGenerator(cfg)
-	url := gen.buildDatabaseURL()
+	url, err := gen.buildDatabaseURL()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if !strings.Contains(url, DefaultDevDBUser+":"+DefaultDevDBPassword+"@") {
 		t.Error("DATABASE_URL should contain dev credentials")
+	}
+}
+
+func TestComposeGenerator_BuildDatabaseURL_SQLiteWithPath(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Database: config.DatabaseConfig{
+			Driver: "sqlite",
+			Path:   "data/my.db",
+		},
+	}
+	gen := NewComposeGenerator(cfg)
+	url, err := gen.buildDatabaseURL()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(url, "data/my.db") {
+		t.Errorf("SQLite URL should contain custom path, got %q", url)
+	}
+}
+
+func TestComposeGenerator_BuildDatabaseURL_SQLiteDefaultPath(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Database: config.DatabaseConfig{
+			Driver: "sqlite",
+		},
+	}
+	gen := NewComposeGenerator(cfg)
+	url, err := gen.buildDatabaseURL()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(url, "var/data.db") {
+		t.Errorf("SQLite URL should contain default path var/data.db, got %q", url)
+	}
+}
+
+func TestComposeGenerator_BuildDatabaseURL_UnknownDriverError(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Database: config.DatabaseConfig{
+			Driver:  "oracle",
+			Version: "19",
+		},
+	}
+	gen := NewComposeGenerator(cfg)
+	_, err := gen.buildDatabaseURL()
+	if err == nil {
+		t.Error("expected error for unknown driver")
+	}
+	if !strings.Contains(err.Error(), "unknown database driver") {
+		t.Errorf("error should mention unknown driver, got: %v", err)
+	}
+}
+
+func TestComposeGenerator_BuildDatabaseURL_CustomHostPortName(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Database: config.DatabaseConfig{
+			Driver:  "pgsql",
+			Version: "16",
+			Host:    "custom-db",
+			Port:    5433,
+			Name:    "mydb",
+		},
+	}
+	gen := NewComposeGenerator(cfg)
+	url, err := gen.buildDatabaseURL()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(url, "@custom-db:5433/mydb") {
+		t.Errorf("DATABASE_URL should use custom host, port and name, got %q", url)
+	}
+}
+
+func TestComposeGenerator_BuildDatabaseURL_VersionEscaped(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Database: config.DatabaseConfig{
+			Driver:  "pgsql",
+			Version: "16.2 (Ubuntu)",
+		},
+	}
+	gen := NewComposeGenerator(cfg)
+	url, err := gen.buildDatabaseURL()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The version should be URL-encoded
+	if strings.Contains(url, "16.2 (Ubuntu)") {
+		t.Error("version should be URL-encoded, but found raw version string")
+	}
+	if !strings.Contains(url, "16.2+%28Ubuntu%29") {
+		t.Errorf("version should be URL-encoded, got %q", url)
+	}
+}
+
+// ─── NormalizeDBDriver ───────────────────────────────────────────────────────
+
+func TestNormalizeDBDriver(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"pdo_pgsql", "pgsql"},
+		{"postgresql", "pgsql"},
+		{"postgres", "pgsql"},
+		{"pgsql", "pgsql"},
+		{"pdo_mysql", "mysql"},
+		{"mysqli", "mysql"},
+		{"mysql", "mysql"},
+		{"pdo_sqlite", "sqlite"},
+		{"sqlite3", "sqlite"},
+		{"sqlite", "sqlite"},
+		{"", ""},
+		{"oracle", "oracle"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := config.NormalizeDBDriver(tt.input)
+			if result != tt.expected {
+				t.Errorf("NormalizeDBDriver(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
 	}
 }
 
