@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
+	"strings"
 	"sync"
 	"text/template"
 )
@@ -97,6 +98,10 @@ func templateFuncs() template.FuncMap {
 				return def
 			}
 			return val
+		},
+		"yamlEscape": func(s string) string {
+			replacer := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`)
+			return replacer.Replace(s)
 		},
 		"appPort":     func() string { return AppPort },
 		"metricsPort": func() string { return MetricsPort },

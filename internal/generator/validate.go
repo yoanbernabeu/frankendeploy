@@ -67,6 +67,9 @@ func ValidateComposeData(data ComposeData) error {
 		if _, err := GetDBDriverInfo(data.Database.Driver); err != nil {
 			return fmt.Errorf("compose data: %w", err)
 		}
+		if data.Database.Version == "" {
+			return fmt.Errorf("compose data: database version is required for driver %q", data.Database.Driver)
+		}
 	}
 
 	return nil

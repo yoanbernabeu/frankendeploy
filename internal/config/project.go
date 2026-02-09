@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -31,6 +32,8 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
+
+	config.Database.Driver = NormalizeDBDriver(config.Database.Driver)
 
 	return &config, nil
 }
@@ -84,4 +87,19 @@ func FindProjectConfig() (string, error) {
 	}
 
 	return "", fmt.Errorf("no %s found in current or parent directories", ProjectConfigFile)
+}
+
+// NormalizeDBDriver normalizes database driver names to their canonical form.
+// For example, "pdo_pgsql" → "pgsql", "pdo_mysql" → "mysql", "pdo_sqlite" → "sqlite".
+func NormalizeDBDriver(driver string) string {
+	switch strings.ToLower(driver) {
+	case "pdo_pgsql", "postgresql", "postgres":
+		return "pgsql"
+	case "pdo_mysql", "mysqli":
+		return "mysql"
+	case "pdo_sqlite", "sqlite3":
+		return "sqlite"
+	default:
+		return driver
+	}
 }

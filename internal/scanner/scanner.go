@@ -172,6 +172,11 @@ func (s *Scanner) ToProjectConfig(result *config.ScanResult, name string) *confi
 		}
 	}
 
+	// Auto-fill Mailer config if detected
+	if result.HasMailer {
+		cfg.Mailer = config.MailerConfig{Enabled: true}
+	}
+
 	// Auto-fill hooks based on detected features
 	cfg.Deploy.Hooks = s.generateDefaultHooks(result)
 

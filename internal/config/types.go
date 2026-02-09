@@ -8,6 +8,7 @@ type ProjectConfig struct {
 	Database          DatabaseConfig   `yaml:"database,omitempty"`
 	Assets            AssetsConfig     `yaml:"assets,omitempty"`
 	Messenger         MessengerConfig  `yaml:"messenger,omitempty"`
+	Mailer            MailerConfig     `yaml:"mailer,omitempty"`
 	Dockerfile        DockerfileConfig `yaml:"dockerfile,omitempty"`
 	Deploy            DeployConfig     `yaml:"deploy,omitempty"`
 	Env               EnvConfig        `yaml:"env,omitempty"`
@@ -47,6 +48,11 @@ type MessengerConfig struct {
 	Enabled    bool     `yaml:"enabled,omitempty"`
 	Workers    int      `yaml:"workers,omitempty"`
 	Transports []string `yaml:"transports,omitempty"`
+}
+
+// MailerConfig holds Symfony Mailer configuration
+type MailerConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
 }
 
 // DockerfileConfig holds Dockerfile customization options
