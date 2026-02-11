@@ -342,24 +342,21 @@ func findValueEnd(s string, start int) int {
 func maskMySQLPasswordFlag(cmd string) string {
 	// Match -p followed by non-space characters (the password)
 	result := cmd
+	searchFrom := 0
 	for {
-		idx := strings.Index(result, "-p")
+		idx := strings.Index(result[searchFrom:], "-p")
 		if idx == -1 {
 			break
 		}
+		absIdx := searchFrom + idx
 		// Check it's actually a password flag, not -port or similar
-		afterP := idx + 2
+		afterP := absIdx + 2
 		if afterP >= len(result) {
 			break
 		}
 		// -p followed by a space means separate argument, skip
 		if result[afterP] == ' ' || result[afterP] == '-' {
-			// Move past this -p to avoid infinite loop
-			nextSpace := strings.IndexByte(result[afterP:], ' ')
-			if nextSpace == -1 {
-				break
-			}
-			idx = afterP + nextSpace
+			searchFrom = afterP
 			continue
 		}
 		// Find end of password value
