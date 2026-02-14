@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -287,6 +288,7 @@ func autoTryKeys(serverCfg *config.ServerConfig, keys []ssh.SSHKeyInfo) *ssh.SSH
 }
 
 func runServerSetup(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	name := args[0]
 
 	conn, err := ConnectToServerNoProject(name)
@@ -305,7 +307,7 @@ func runServerSetup(cmd *cobra.Command, args []string) error {
 		"sudo apt-get update -qq",
 		"sudo apt-get install -y -qq curl ca-certificates",
 	}
-	if err := runCommandsWithProgress(client, prereqCommands); err != nil {
+	if err := runCommandsWithProgress(ctx, client, prereqCommands); err != nil {
 		return err
 	}
 
@@ -318,7 +320,7 @@ func runServerSetup(cmd *cobra.Command, args []string) error {
 		"sudo systemctl enable fail2ban",
 		"sudo systemctl start fail2ban",
 	}
-	if err := runCommandsWithProgress(client, fail2banCommands); err != nil {
+	if err := runCommandsWithProgress(ctx, client, fail2banCommands); err != nil {
 		return err
 	}
 
@@ -334,11 +336,11 @@ findtime = 600
 `
 	fail2banConfigCmd := fmt.Sprintf(`sudo tee /etc/fail2ban/jail.local > /dev/null << 'FAIL2BANEOF'
 %sFAIL2BANEOF`, fail2banConfig)
-	if _, err := client.Exec(fail2banConfigCmd); err != nil {
+	if _, err := client.Exec(ctx, fail2banConfigCmd); err != nil {
 		PrintWarning("Failed to configure Fail2ban jail: %v", err)
 	} else {
 		// Restart Fail2ban to apply configuration
-		if _, err := client.Exec("sudo systemctl restart fail2ban"); err != nil {
+		if _, err := client.Exec(ctx, "sudo systemctl restart fail2ban"); err != nil {
 			PrintWarning("Could not restart Fail2ban: %v", err)
 		}
 	}
@@ -354,7 +356,7 @@ findtime = 600
 		"sudo systemctl enable docker",
 		"sudo systemctl start docker",
 	}
-	if err := runCommandsWithProgress(client, dockerCommands); err != nil {
+	if err := runCommandsWithProgress(ctx, client, dockerCommands); err != nil {
 		return err
 	}
 
@@ -369,7 +371,7 @@ findtime = 600
 		// Create Docker network for apps
 		fmt.Sprintf("docker network create %s 2>/dev/null || true", constants.NetworkName),
 	}
-	if err := runCommandsWithProgress(client, structureCommands); err != nil {
+	if err := runCommandsWithProgress(ctx, client, structureCommands); err != nil {
 		return err
 	}
 
@@ -384,12 +386,12 @@ findtime = 600
 	uploadCaddyCmd := fmt.Sprintf(`cat > %s/Caddyfile << 'CADDYEOF'
 %s
 CADDYEOF`, constants.CaddyDir, mainConfig)
-	if _, err := client.Exec(uploadCaddyCmd); err != nil {
+	if _, err := client.Exec(ctx, uploadCaddyCmd); err != nil {
 		return fmt.Errorf("failed to upload Caddyfile: %w", err)
 	}
 
 	// Create empty placeholder for apps import
-	if _, err := client.Exec(fmt.Sprintf("touch %s/apps/.keep", constants.CaddyDir)); err != nil {
+	if _, err := client.Exec(ctx, fmt.Sprintf("touch %s/apps/.keep", constants.CaddyDir)); err != nil {
 		return fmt.Errorf("failed to create apps directory: %w", err)
 	}
 
@@ -402,7 +404,7 @@ CADDYEOF`, constants.CaddyDir, mainConfig)
 		"sudo ufw allow 443/tcp || true",
 		"sudo ufw --force enable || true",
 	}
-	if err := runCommandsWithProgress(client, firewallCommands); err != nil {
+	if err := runCommandsWithProgress(ctx, client, firewallCommands); err != nil {
 		return err
 	}
 
@@ -423,16 +425,16 @@ CADDYEOF`, constants.CaddyDir, mainConfig)
 		-v caddy_config:/config/caddy \
 		caddy:alpine`, constants.NetworkName, constants.CaddyDir, constants.CaddyDir, constants.CaddyDir)
 
-	result, err := client.Exec(caddyContainerCmd)
+	result, err := client.Exec(ctx, caddyContainerCmd)
 	if err != nil {
 		return fmt.Errorf("failed to start Caddy container: %w", err)
 	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("failed to start Caddy container: %s", result.Stderr)
+	if err := result.Err(); err != nil {
+		return fmt.Errorf("failed to start Caddy container: %w", err)
 	}
 
 	// Verify Caddy is running
-	result, err = client.Exec("docker ps --filter name=caddy --format '{{.Status}}'")
+	result, err = client.Exec(ctx, "docker ps --filter name=caddy --format '{{.Status}}'")
 	if err == nil && strings.Contains(result.Stdout, "Up") {
 		PrintSuccess("Caddy container is running")
 	} else {
@@ -455,16 +457,16 @@ CADDYEOF`, constants.CaddyDir, mainConfig)
 }
 
 // runCommandsWithProgress executes a list of commands with error handling
-func runCommandsWithProgress(client *ssh.Client, commands []string) error {
+func runCommandsWithProgress(ctx context.Context, client *ssh.Client, commands []string) error {
 	for _, command := range commands {
 		PrintVerbose("  > %s", command)
-		result, err := client.Exec(command)
+		result, err := client.Exec(ctx, command)
 		if err != nil {
 			return fmt.Errorf("command failed: %w", err)
 		}
 		// Allow commands with || true or || to fail gracefully
 		if result.ExitCode != 0 && !strings.Contains(command, "|| true") && !strings.Contains(command, "|| ") && !strings.Contains(command, "2>/dev/null") {
-			return fmt.Errorf("command failed (exit %d): %s\nStderr: %s", result.ExitCode, command, result.Stderr)
+			return fmt.Errorf("command %q failed: %w", command, result.Err())
 		}
 	}
 	return nil
@@ -504,6 +506,7 @@ func runServerList(cmd *cobra.Command, args []string) error {
 }
 
 func runServerStatus(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	name := args[0]
 
 	conn, err := ConnectToServerNoProject(name)
@@ -517,7 +520,7 @@ func runServerStatus(cmd *cobra.Command, args []string) error {
 	PrintSuccess("Connection: OK")
 
 	// Check Docker
-	result, err := client.Exec("docker --version")
+	result, err := client.Exec(ctx, "docker --version")
 	if err == nil && result.ExitCode == 0 {
 		PrintSuccess("Docker: %s", strings.TrimSpace(result.Stdout))
 	} else {
@@ -525,7 +528,7 @@ func runServerStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check FrankenDeploy directory
-	result, err = client.Exec(fmt.Sprintf("test -d %s && echo 'exists'", constants.BasePath))
+	result, err = client.Exec(ctx, fmt.Sprintf("test -d %s && echo 'exists'", constants.BasePath))
 	if err == nil && strings.Contains(result.Stdout, "exists") {
 		PrintSuccess("FrankenDeploy: Configured")
 	} else {
@@ -533,7 +536,7 @@ func runServerStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check Caddy container
-	result, err = client.Exec("docker ps --filter name=caddy --format '{{.Status}}'")
+	result, err = client.Exec(ctx, "docker ps --filter name=caddy --format '{{.Status}}'")
 	if err == nil {
 		caddyStatus := strings.TrimSpace(result.Stdout)
 		if strings.Contains(caddyStatus, "Up") {
@@ -546,7 +549,7 @@ func runServerStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check Docker network
-	result, err = client.Exec(fmt.Sprintf("docker network inspect %s --format '{{.Name}}' 2>/dev/null", constants.NetworkName))
+	result, err = client.Exec(ctx, fmt.Sprintf("docker network inspect %s --format '{{.Name}}' 2>/dev/null", constants.NetworkName))
 	if err == nil && strings.Contains(result.Stdout, constants.NetworkName) {
 		PrintSuccess("Docker network: %s", constants.NetworkName)
 	} else {
@@ -558,7 +561,7 @@ func runServerStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println("System Resources:")
 
 	// CPU usage
-	result, err = client.Exec("top -bn1 | grep 'Cpu(s)' | awk '{print 100 - $8}' 2>/dev/null || echo 'N/A'")
+	result, err = client.Exec(ctx, "top -bn1 | grep 'Cpu(s)' | awk '{print 100 - $8}' 2>/dev/null || echo 'N/A'")
 	if err == nil {
 		cpuUsage := strings.TrimSpace(result.Stdout)
 		if cpuUsage != "" && cpuUsage != "N/A" {
@@ -567,7 +570,7 @@ func runServerStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Memory usage
-	result, err = client.Exec("free -m | awk 'NR==2{printf \"%.1f/%.1fGB (%.0f%%)\", $3/1024, $2/1024, $3*100/$2}'")
+	result, err = client.Exec(ctx, "free -m | awk 'NR==2{printf \"%.1f/%.1fGB (%.0f%%)\", $3/1024, $2/1024, $3*100/$2}'")
 	if err == nil {
 		memUsage := strings.TrimSpace(result.Stdout)
 		if memUsage != "" {
@@ -576,7 +579,7 @@ func runServerStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Disk usage
-	result, err = client.Exec("df -h / | awk 'NR==2{printf \"%s/%s (%s)\", $3, $2, $5}'")
+	result, err = client.Exec(ctx, "df -h / | awk 'NR==2{printf \"%s/%s (%s)\", $3, $2, $5}'")
 	if err == nil {
 		diskUsage := strings.TrimSpace(result.Stdout)
 		if diskUsage != "" {
@@ -585,7 +588,7 @@ func runServerStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Load average
-	result, err = client.Exec("uptime | awk -F'load average:' '{print $2}' | xargs")
+	result, err = client.Exec(ctx, "uptime | awk -F'load average:' '{print $2}' | xargs")
 	if err == nil {
 		loadAvg := strings.TrimSpace(result.Stdout)
 		if loadAvg != "" {
@@ -594,7 +597,7 @@ func runServerStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// List deployed apps with container stats
-	result, err = client.Exec(fmt.Sprintf("ls -1 %s 2>/dev/null", constants.AppsDir))
+	result, err = client.Exec(ctx, fmt.Sprintf("ls -1 %s 2>/dev/null", constants.AppsDir))
 	if err == nil {
 		apps := strings.TrimSpace(result.Stdout)
 		if apps != "" {
@@ -609,7 +612,7 @@ func runServerStatus(cmd *cobra.Command, args []string) error {
 
 				// Get container stats for app
 				statsCmd := fmt.Sprintf("docker stats --no-stream --format '{{.CPUPerc}}\t{{.MemUsage}}' %s 2>/dev/null", app)
-				statsResult, statsErr := client.Exec(statsCmd)
+				statsResult, statsErr := client.Exec(ctx, statsCmd)
 				if statsErr == nil {
 					stats := strings.TrimSpace(statsResult.Stdout)
 					if stats != "" {
@@ -626,7 +629,7 @@ func runServerStatus(cmd *cobra.Command, args []string) error {
 
 				// Get worker stats if exists
 				workerStatsCmd := fmt.Sprintf("docker stats --no-stream --format '{{.CPUPerc}}\t{{.MemUsage}}' %s-worker 2>/dev/null", app)
-				workerResult, workerErr := client.Exec(workerStatsCmd)
+				workerResult, workerErr := client.Exec(ctx, workerStatsCmd)
 				if workerErr == nil {
 					workerStats := strings.TrimSpace(workerResult.Stdout)
 					if workerStats != "" {

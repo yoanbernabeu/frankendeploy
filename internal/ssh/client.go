@@ -160,15 +160,6 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// IsConnected checks if the client has an active connection by sending a keepalive request.
-func (c *Client) IsConnected() bool {
-	if c.client == nil {
-		return false
-	}
-	_, _, err := c.client.SendRequest("keepalive@frankendeploy", true, nil)
-	return err == nil
-}
-
 // Reconnect closes the existing connection and establishes a new one.
 // Requires that Connect() was called previously (sshConfig is stored).
 func (c *Client) Reconnect() error {
@@ -286,11 +277,6 @@ func (c *Client) hostKeyCallback() (ssh.HostKeyCallback, error) {
 	}
 
 	return callback, nil
-}
-
-// GetClient returns the underlying SSH client
-func (c *Client) GetClient() *ssh.Client {
-	return c.client
 }
 
 // NewSession creates a new SSH session.

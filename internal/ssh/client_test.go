@@ -57,13 +57,6 @@ func TestNewClient_WithOptions(t *testing.T) {
 	}
 }
 
-func TestIsConnected_NilClient(t *testing.T) {
-	client := NewClient("host", "user", 22, "/key")
-	if client.IsConnected() {
-		t.Error("expected IsConnected() to return false for nil client")
-	}
-}
-
 func TestReconnect_NoConfig(t *testing.T) {
 	client := NewClient("host", "user", 22, "/key")
 	err := client.Reconnect()

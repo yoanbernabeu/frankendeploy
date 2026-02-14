@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -36,7 +37,7 @@ var FrameworkEnvRequirements = map[string][]EnvRequirement{
 }
 
 // CheckEnvVars verifies that required environment variables are set on the server
-func CheckEnvVars(client *ssh.Client, cfg *config.ProjectConfig, serverName string) (*EnvCheckResult, error) {
+func CheckEnvVars(ctx context.Context, client ssh.Executor, cfg *config.ProjectConfig, serverName string) (*EnvCheckResult, error) {
 	result := &EnvCheckResult{
 		Missing:   []EnvRequirement{},
 		Present:   []string{},
@@ -47,7 +48,7 @@ func CheckEnvVars(client *ssh.Client, cfg *config.ProjectConfig, serverName stri
 	envFile := filepath.Join("/opt/frankendeploy/apps", cfg.Name, "shared", ".env.local")
 
 	// Read existing env variables
-	execResult, _ := client.Exec(fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
+	execResult, _ := client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
 	existingVars := parseEnvContent(execResult.Stdout)
 
 	// Get framework requirements (default to Symfony)
@@ -134,7 +135,7 @@ func GenerateMissingSecrets(missing []EnvRequirement) (map[string]string, error)
 }
 
 // SaveGeneratedSecrets writes generated secrets to the server's .env.local file
-func SaveGeneratedSecrets(client *ssh.Client, appName string, secrets map[string]string) error {
+func SaveGeneratedSecrets(ctx context.Context, client ssh.Executor, appName string, secrets map[string]string) error {
 	if len(secrets) == 0 {
 		return nil
 	}
@@ -143,12 +144,12 @@ func SaveGeneratedSecrets(client *ssh.Client, appName string, secrets map[string
 
 	// Ensure directory exists
 	mkdirCmd := fmt.Sprintf("mkdir -p $(dirname %s)", envFile)
-	if _, err := client.Exec(mkdirCmd); err != nil {
+	if _, err := client.Exec(ctx, mkdirCmd); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
 	// Read existing env file
-	result, _ := client.Exec(fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
+	result, _ := client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
 	existingVars := parseEnvContent(result.Stdout)
 
 	// Merge new secrets
@@ -163,16 +164,16 @@ func SaveGeneratedSecrets(client *ssh.Client, appName string, secrets map[string
 		return fmt.Errorf("failed to generate delimiter: %w", err)
 	}
 	writeCmd := fmt.Sprintf("cat > %s << '%s'\n%s%s", envFile, delim, newContent, delim)
-	if _, err := client.Exec(writeCmd); err != nil {
+	if _, err := client.Exec(ctx, writeCmd); err != nil {
 		return fmt.Errorf("failed to write env file: %w", err)
 	}
 
 	// Fix permissions for container user
-	if _, err := client.Exec(fmt.Sprintf("sudo chown 1000:1000 %s 2>/dev/null || true", envFile)); err != nil {
+	if _, err := client.Exec(ctx, fmt.Sprintf("sudo chown 1000:1000 %s 2>/dev/null || true", envFile)); err != nil {
 		// Non-critical: permissions may need manual fix
 		_ = err
 	}
-	if _, err := client.Exec(fmt.Sprintf("sudo chmod 600 %s 2>/dev/null || true", envFile)); err != nil {
+	if _, err := client.Exec(ctx, fmt.Sprintf("sudo chmod 600 %s 2>/dev/null || true", envFile)); err != nil {
 		// Non-critical: permissions may need manual fix
 		_ = err
 	}
