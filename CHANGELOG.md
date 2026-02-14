@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-02-14
+
+### Changed
+
+- **SSH Executor Interface**: Add `ssh.Executor` interface for dependency injection and testability across all SSH-dependent code (#20) - @yoanbernabeu
+- **Context Propagation**: Add `context.Context` to all `Exec`/`ExecStream` calls (~130 call sites) enabling cancellation and timeout (#20) - @yoanbernabeu
+- **Error Wrapping**: Replace 15 instances of `%s` error formatting with proper `%w` wrapping using new `CommandError` type and `ExecResult.Err()` helper (#20) - @yoanbernabeu
+- **Code Deduplication**: Extract `stopAndRemoveContainer`/`forceRemoveContainer` helpers, `EffectiveSharedDirs()`/`EffectiveSharedFiles()` config methods, and merge `ConnectToServer` internals (#20) - @yoanbernabeu
+
+### Fixed
+
+- **Critical ExitError Bug**: Fix `ExitError` type assertion that silently swallowed all non-zero exit codes — `ExitCode` was always 0, making all exit code checks dead code (#20) - @yoanbernabeu
+- **Security**: Remove `StrictHostKeyChecking=no` from scp and rsync commands (#20) - @yoanbernabeu
+
+### Removed
+
+- **Dead SSH Code**: Remove 14 unused SSH methods including `transfer.go`, `ExecMultiple`, `Shell`, `StreamOutput`, `IsConnected`, `GetClient` (#20) - @yoanbernabeu
+
 ## [0.7.0] - 2026-02-14
 
 ### Added
@@ -44,7 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial public release with core deployment features.
 
-[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.4.0...v0.5.0
