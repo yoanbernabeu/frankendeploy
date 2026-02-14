@@ -42,9 +42,12 @@ func (s *Scanner) Scan() (*config.ScanResult, error) {
 	result.Framework = "symfony"
 
 	// Detect database
-	dbConfig, err := s.DetectDatabase()
-	if err == nil {
+	dbConfig, dbWarning, err := s.DetectDatabase()
+	if err == nil && dbConfig != nil {
 		result.Database = *dbConfig
+	}
+	if dbWarning != "" {
+		result.Warnings = append(result.Warnings, dbWarning)
 	}
 
 	// Detect assets
@@ -143,7 +146,17 @@ func (s *Scanner) enhanceExtensions(extensions []string, result *config.ScanResu
 		extensions = append(extensions, "amqp")
 	}
 
-	return extensions
+	// Deduplicate while preserving order
+	seen := make(map[string]bool)
+	deduped := make([]string, 0, len(extensions))
+	for _, ext := range extensions {
+		if !seen[ext] {
+			seen[ext] = true
+			deduped = append(deduped, ext)
+		}
+	}
+
+	return deduped
 }
 
 // ToProjectConfig converts scan result to project config

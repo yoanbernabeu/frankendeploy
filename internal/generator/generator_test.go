@@ -20,7 +20,7 @@ func TestValidateDockerfileData_ValidMinimal(t *testing.T) {
 }
 
 func TestValidateDockerfileData_InvalidPHPVersion(t *testing.T) {
-	for _, v := range []string{"7.4", "8.0", "8.5", "9.0", "abc", ""} {
+	for _, v := range []string{"7.4", "8.0", "9.0", "abc", ""} {
 		data := DockerfileData{PHP: config.PHPConfig{Version: v}}
 		if err := ValidateDockerfileData(data); err == nil {
 			t.Errorf("expected error for PHP version %q", v)
@@ -29,7 +29,7 @@ func TestValidateDockerfileData_InvalidPHPVersion(t *testing.T) {
 }
 
 func TestValidateDockerfileData_ValidPHPVersions(t *testing.T) {
-	for _, v := range []string{"8.1", "8.2", "8.3", "8.4"} {
+	for _, v := range []string{"8.1", "8.2", "8.3", "8.4", "8.5"} {
 		data := DockerfileData{PHP: config.PHPConfig{Version: v}}
 		if err := ValidateDockerfileData(data); err != nil {
 			t.Errorf("unexpected error for PHP version %q: %v", v, err)

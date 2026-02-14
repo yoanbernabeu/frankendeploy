@@ -43,8 +43,9 @@ func getSQLiteDirectory(path string) string {
 	return dir
 }
 
-// DetectDatabase detects the database configuration from the project
-func (s *Scanner) DetectDatabase() (*config.DatabaseConfig, error) {
+// DetectDatabase detects the database configuration from the project.
+// Returns the config, an optional warning message, and an error.
+func (s *Scanner) DetectDatabase() (*config.DatabaseConfig, string, error) {
 	dbConfig := &config.DatabaseConfig{}
 
 	// First, check doctrine.yaml for explicit driver
@@ -57,7 +58,7 @@ func (s *Scanner) DetectDatabase() (*config.DatabaseConfig, error) {
 				managed := true
 				dbConfig.Managed = &managed
 			}
-			return dbConfig, nil
+			return dbConfig, "", nil
 		}
 	}
 
@@ -75,7 +76,7 @@ func (s *Scanner) DetectDatabase() (*config.DatabaseConfig, error) {
 					managed := true
 					dbConfig.Managed = &managed
 				}
-				return dbConfig, nil
+				return dbConfig, "", nil
 			}
 		}
 	}
@@ -83,7 +84,7 @@ func (s *Scanner) DetectDatabase() (*config.DatabaseConfig, error) {
 	// Check composer.json for database packages
 	composer, err := s.ParseComposer()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	// Detect from installed packages
@@ -99,14 +100,17 @@ func (s *Scanner) DetectDatabase() (*config.DatabaseConfig, error) {
 			// Default to PostgreSQL as it's recommended for production
 			dbConfig.Driver = "pgsql"
 			dbConfig.Version = "16"
+			managed := true
+			dbConfig.Managed = &managed
+			return dbConfig, "no database driver explicitly configured, defaulting to PostgreSQL. Set DATABASE_URL in .env or configure doctrine.yaml to silence this warning", nil
 		}
 		managed := true
 		dbConfig.Managed = &managed
-		return dbConfig, nil
+		return dbConfig, "", nil
 	}
 
 	// No database detected
-	return nil, nil
+	return nil, "", nil
 }
 
 // parseDBURL extracts driver and version from DATABASE_URL

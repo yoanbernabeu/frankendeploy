@@ -138,6 +138,67 @@ func TestLoadProjectConfig_ValidatesSharedDirs(t *testing.T) {
 	}
 }
 
+func TestLoadProjectConfig_RejectsUnknownFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr bool
+	}{
+		{
+			"valid fields only",
+			"name: my-app\nphp:\n  version: '8.3'\n",
+			false,
+		},
+		{
+			"unknown top-level field",
+			"name: my-app\nphp:\n  version: '8.3'\nunknown_field: value\n",
+			true,
+		},
+		{
+			"unknown nested field",
+			"name: my-app\nphp:\n  version: '8.3'\n  unknown_nested: true\n",
+			true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "frankendeploy.yaml")
+			if err := os.WriteFile(path, []byte(tt.yaml), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := LoadProjectConfig(path)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("LoadProjectConfig() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSaveProjectConfig_Permissions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "frankendeploy.yaml")
+
+	cfg := DefaultProjectConfig()
+	cfg.Name = "test-app"
+
+	if err := SaveProjectConfig(cfg, path); err != nil {
+		t.Fatalf("SaveProjectConfig() error = %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("os.Stat() error = %v", err)
+	}
+
+	perm := info.Mode().Perm()
+	if perm != 0600 {
+		t.Errorf("expected file permissions 0600, got %04o", perm)
+	}
+}
+
 func TestNormalizeDBDriver(t *testing.T) {
 	tests := []struct {
 		input    string

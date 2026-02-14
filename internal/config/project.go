@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,8 +31,10 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 	}
 
 	var config ProjectConfig
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&config); err != nil {
+		return nil, fmt.Errorf("failed to parse config file (check for typos or unknown fields): %w", err)
 	}
 
 	config.Database.Driver = NormalizeDBDriver(config.Database.Driver)
@@ -76,7 +79,7 @@ func SaveProjectConfig(config *ProjectConfig, path string) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 

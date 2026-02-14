@@ -1,6 +1,8 @@
 package scanner
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -148,6 +150,70 @@ func TestParseDBURL_SQLite(t *testing.T) {
 				t.Errorf("parseDBURL(%q) version = %q, want %q", tt.url, version, tt.expectedVer)
 			}
 		})
+	}
+}
+
+func TestDetectDatabase_FallbackWarning(t *testing.T) {
+	// Project with doctrine/orm but no explicit driver → should warn about PostgreSQL fallback
+	tempDir := t.TempDir()
+
+	composerContent := `{
+		"require": {
+			"php": ">=8.1",
+			"symfony/framework-bundle": "^6.4",
+			"doctrine/orm": "^3.0",
+			"doctrine/dbal": "^4.0"
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(tempDir, "composer.json"), []byte(composerContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(tempDir)
+	dbConfig, warning, err := s.DetectDatabase()
+	if err != nil {
+		t.Fatalf("DetectDatabase() error = %v", err)
+	}
+	if dbConfig == nil {
+		t.Fatal("expected database config, got nil")
+	}
+	if dbConfig.Driver != "pgsql" {
+		t.Errorf("expected driver pgsql, got %q", dbConfig.Driver)
+	}
+	if warning == "" {
+		t.Error("expected warning for PostgreSQL fallback, got empty string")
+	}
+}
+
+func TestDetectDatabase_NoWarningExplicit(t *testing.T) {
+	// Project with explicit DATABASE_URL → should NOT warn
+	tempDir := t.TempDir()
+
+	composerContent := `{
+		"require": {
+			"php": ">=8.1",
+			"symfony/framework-bundle": "^6.4"
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(tempDir, "composer.json"), []byte(composerContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	envContent := "DATABASE_URL=postgresql://user:pass@localhost:5432/mydb\n"
+	if err := os.WriteFile(filepath.Join(tempDir, ".env"), []byte(envContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(tempDir)
+	dbConfig, warning, err := s.DetectDatabase()
+	if err != nil {
+		t.Fatalf("DetectDatabase() error = %v", err)
+	}
+	if dbConfig == nil {
+		t.Fatal("expected database config, got nil")
+	}
+	if warning != "" {
+		t.Errorf("expected no warning for explicit DATABASE_URL, got %q", warning)
 	}
 }
 

@@ -160,6 +160,163 @@ func TestValidateProjectConfig(t *testing.T) {
 			},
 			wantErrors: false,
 		},
+		{
+			name: "invalid extension name",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version:    "8.3",
+					Extensions: []string{"intl", "pdo-pgsql!"},
+				},
+			},
+			wantErrors: true,
+		},
+		{
+			name: "valid extension names",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version:    "8.3",
+					Extensions: []string{"intl", "pdo_pgsql", "opcache"},
+				},
+			},
+			wantErrors: false,
+		},
+		{
+			name: "invalid database version",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Database: DatabaseConfig{
+					Driver:  "pgsql",
+					Version: "16-alpine",
+				},
+			},
+			wantErrors: true,
+		},
+		{
+			name: "valid database version with dots",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Database: DatabaseConfig{
+					Driver:  "pgsql",
+					Version: "16.2",
+				},
+			},
+			wantErrors: false,
+		},
+		{
+			name: "invalid domain",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Deploy: DeployConfig{
+					Domain: "not a domain!",
+				},
+			},
+			wantErrors: true,
+		},
+		{
+			name: "valid domain",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Deploy: DeployConfig{
+					Domain: "app.example.com",
+				},
+			},
+			wantErrors: false,
+		},
+		{
+			name: "invalid healthcheck path",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Deploy: DeployConfig{
+					HealthcheckPath: "no-leading-slash",
+				},
+			},
+			wantErrors: true,
+		},
+		{
+			name: "valid healthcheck path",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Deploy: DeployConfig{
+					HealthcheckPath: "/healthz",
+				},
+			},
+			wantErrors: false,
+		},
+		{
+			name: "path traversal in healthcheck",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Deploy: DeployConfig{
+					HealthcheckPath: "/../etc/passwd",
+				},
+			},
+			wantErrors: true,
+		},
+		{
+			name: "messenger enabled with zero workers",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Messenger: MessengerConfig{
+					Enabled: true,
+					Workers: 0,
+				},
+			},
+			wantErrors: true,
+		},
+		{
+			name: "messenger enabled with valid workers",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Messenger: MessengerConfig{
+					Enabled: true,
+					Workers: 2,
+				},
+			},
+			wantErrors: false,
+		},
+		{
+			name: "messenger disabled with zero workers is valid",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Messenger: MessengerConfig{
+					Enabled: false,
+					Workers: 0,
+				},
+			},
+			wantErrors: false,
+		},
 	}
 
 	for _, tt := range tests {

@@ -119,8 +119,22 @@ func (s *Scanner) GetEnvFile(filename string) (map[string]string, error) {
 		if len(parts) == 2 {
 			key := strings.TrimSpace(parts[0])
 			value := strings.TrimSpace(parts[1])
-			// Remove quotes
-			value = strings.Trim(value, `"'`)
+
+			if (strings.HasPrefix(value, `"`) && strings.Contains(value[1:], `"`)) ||
+				(strings.HasPrefix(value, `'`) && strings.Contains(value[1:], `'`)) {
+				// Quoted value: extract content between quotes (preserves # inside)
+				quote := value[0]
+				endIdx := strings.IndexByte(value[1:], quote)
+				if endIdx >= 0 {
+					value = value[1 : endIdx+1]
+				}
+			} else {
+				// Unquoted value: strip inline comment (space + #)
+				if idx := strings.Index(value, " #"); idx >= 0 {
+					value = strings.TrimRight(value[:idx], " ")
+				}
+			}
+
 			env[key] = value
 		}
 	}

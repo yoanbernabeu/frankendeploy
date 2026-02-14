@@ -55,6 +55,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to analyze project: %w", err)
 	}
 
+	// Display scanner warnings
+	for _, w := range result.Warnings {
+		PrintWarning(w)
+	}
+
 	// Determine project name
 	projectName := initName
 	if projectName == "" {

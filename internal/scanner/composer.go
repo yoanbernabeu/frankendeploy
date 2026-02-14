@@ -80,7 +80,7 @@ func (s *Scanner) ParseComposer() (*ComposerResult, error) {
 // extractPHPVersion extracts a clean PHP version from composer constraint
 func extractPHPVersion(constraint string) string {
 	// Common patterns: ">=8.1", "^8.2", "~8.3", "8.2.*", ">=8.1 <8.4"
-	re := regexp.MustCompile(`8\.[1-4]`)
+	re := regexp.MustCompile(`8\.\d+`)
 	matches := re.FindAllString(constraint, -1)
 
 	if len(matches) == 0 {

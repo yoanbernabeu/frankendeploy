@@ -122,6 +122,7 @@ type ScanResult struct {
 	HasMessenger  bool
 	HasMailer     bool
 	Framework     string
+	Warnings      []string
 }
 
 // DefaultProjectConfig returns a default project configuration

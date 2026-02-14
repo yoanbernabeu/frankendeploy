@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	phpVersionRegex      = regexp.MustCompile(`^8\.[1-4]$`)
+	phpVersionRegex      = regexp.MustCompile(`^8\.[1-9]\d*$`)
 	phpExtensionRegex    = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 	extraPackageRegex    = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._+-]*$`)
 	frankenPHPVersionRgx = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
@@ -21,7 +21,7 @@ var shellInjectionPatterns = []string{"$(", "`", ";", "&&", "||", "|", ">", "<",
 // ValidateDockerfileData validates inputs before Dockerfile generation.
 func ValidateDockerfileData(data DockerfileData) error {
 	if !phpVersionRegex.MatchString(data.PHP.Version) {
-		return fmt.Errorf("invalid PHP version %q: must match 8.1–8.4", data.PHP.Version)
+		return fmt.Errorf("invalid PHP version %q: must be 8.x (e.g., 8.1, 8.2, 8.3, 8.4)", data.PHP.Version)
 	}
 
 	for _, ext := range data.PHP.Extensions {
