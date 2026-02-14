@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-02-14
+
+### Added
+
+- **Generator Hardening**: Add validation, constants, DB registry, and thread-safe template loading (#13) - @yoanbernabeu
+
+### Fixed
+
+- **Scanner & Config Validation**: Fix silent PostgreSQL fallback, add validation for extensions/domain/healthcheck/messenger, YAML strict mode, .env inline comment parsing, config file permissions (#17) - @yoanbernabeu
+- **Security Hardening**: Prevent command injection in shell commands and fix ineffectual assignment in password masking - @yoanbernabeu
+- **Blue-Green Deployment**: Add zero-downtime deployment with rollback, SSH reconnection with exponential backoff, deploy state machine (#16) - @yoanbernabeu
+- **Compose Generator**: Fix 10 Docker Compose generator bugs including database URL building, SQLite handling, and YAML escaping (#18) - @yoanbernabeu
+
 ## [0.6.0] - 2026-01-31
 
 ### Added
@@ -31,7 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial public release with core deployment features.
 
-[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/yoanbernabeu/frankendeploy/releases/tag/v0.4.0
