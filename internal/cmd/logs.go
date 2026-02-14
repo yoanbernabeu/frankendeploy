@@ -38,6 +38,7 @@ func init() {
 }
 
 func runLogs(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	serverName := args[0]
 
 	// Validate inputs
@@ -95,13 +96,13 @@ func runLogs(cmd *cobra.Command, args []string) error {
 			if logsSince != "" {
 				logsCommand += fmt.Sprintf(" --since %s", logsSince)
 			}
-			result, _ := conn.Client.Exec(logsCommand)
+			result, _ := conn.Client.Exec(ctx, logsCommand)
 			fmt.Print(result.Stdout)
 			if result.Stderr != "" {
 				fmt.Print(result.Stderr)
 			}
 		} else {
-			if err := conn.Client.ExecStream(logsCommand); err != nil {
+			if err := conn.Client.ExecStream(ctx, logsCommand); err != nil {
 				// Container might not exist (e.g., no worker)
 				if logsService != "all" {
 					return fmt.Errorf("failed to get logs: %w", err)

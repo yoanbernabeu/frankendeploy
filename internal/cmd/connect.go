@@ -20,13 +20,29 @@ type ServerConnection struct {
 // ConnectToServer validates the server name, loads project + global config,
 // and establishes an SSH connection. The caller must defer conn.Client.Close().
 func ConnectToServer(serverName string, opts ...ssh.ClientOption) (*ServerConnection, error) {
+	return connectToServerInternal(serverName, true, opts...)
+}
+
+// ConnectToServerNoProject validates the server name, loads global config only,
+// and establishes an SSH connection. Used for commands that don't require a project config
+// (e.g., server setup, app list). The caller must defer conn.Client.Close().
+func ConnectToServerNoProject(serverName string, opts ...ssh.ClientOption) (*ServerConnection, error) {
+	return connectToServerInternal(serverName, false, opts...)
+}
+
+// connectToServerInternal is the shared implementation for server connections.
+func connectToServerInternal(serverName string, loadProject bool, opts ...ssh.ClientOption) (*ServerConnection, error) {
 	if err := security.ValidateServerName(serverName); err != nil {
 		return nil, fmt.Errorf("invalid server name: %w", err)
 	}
 
-	projectCfg, err := config.LoadProjectConfig(GetConfigFile())
-	if err != nil {
-		return nil, fmt.Errorf("failed to load project config: %w", err)
+	var projectCfg *config.ProjectConfig
+	if loadProject {
+		var err error
+		projectCfg, err = config.LoadProjectConfig(GetConfigFile())
+		if err != nil {
+			return nil, fmt.Errorf("failed to load project config: %w", err)
+		}
 	}
 
 	globalCfg, err := config.LoadGlobalConfig()
@@ -49,39 +65,6 @@ func ConnectToServer(serverName string, opts ...ssh.ClientOption) (*ServerConnec
 	return &ServerConnection{
 		Client:  client,
 		Project: projectCfg,
-		Server:  serverCfg,
-		Global:  globalCfg,
-	}, nil
-}
-
-// ConnectToServerNoProject validates the server name, loads global config only,
-// and establishes an SSH connection. Used for commands that don't require a project config
-// (e.g., server setup, app list). The caller must defer conn.Client.Close().
-func ConnectToServerNoProject(serverName string, opts ...ssh.ClientOption) (*ServerConnection, error) {
-	if err := security.ValidateServerName(serverName); err != nil {
-		return nil, fmt.Errorf("invalid server name: %w", err)
-	}
-
-	globalCfg, err := config.LoadGlobalConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load global config: %w", err)
-	}
-
-	serverCfg, err := globalCfg.GetServer(serverName)
-	if err != nil {
-		return nil, err
-	}
-
-	allOpts := sshOptsFromGlobal(globalCfg, opts)
-
-	client := ssh.NewClient(serverCfg.Host, serverCfg.User, serverCfg.Port, serverCfg.KeyPath, allOpts...)
-	if err := client.Connect(); err != nil {
-		return nil, fmt.Errorf("failed to connect: %w", err)
-	}
-
-	return &ServerConnection{
-		Client:  client,
-		Project: nil,
 		Server:  serverCfg,
 		Global:  globalCfg,
 	}, nil

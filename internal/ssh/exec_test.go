@@ -1,71 +1,78 @@
 package ssh
 
 import (
-	"bytes"
-	"strings"
+	"errors"
 	"testing"
 )
 
-func TestStreamWithPrefix(t *testing.T) {
+func TestExecResult_Err_Zero(t *testing.T) {
+	r := &ExecResult{ExitCode: 0, Stdout: "ok", Stderr: ""}
+	if r.Err() != nil {
+		t.Error("expected nil error for exit code 0")
+	}
+}
+
+func TestExecResult_Err_NonZero(t *testing.T) {
+	r := &ExecResult{ExitCode: 1, Stderr: "something went wrong"}
+	err := r.Err()
+	if err == nil {
+		t.Fatal("expected error for exit code 1")
+	}
+
+	var cmdErr *CommandError
+	if !errors.As(err, &cmdErr) {
+		t.Fatal("expected *CommandError")
+	}
+	if cmdErr.ExitCode != 1 {
+		t.Errorf("expected exit code 1, got %d", cmdErr.ExitCode)
+	}
+	if cmdErr.Stderr != "something went wrong" {
+		t.Errorf("unexpected stderr: %q", cmdErr.Stderr)
+	}
+}
+
+func TestCommandError_ErrorMessage(t *testing.T) {
 	tests := []struct {
 		name     string
-		input    string
-		prefix   string
-		expected []string
+		err      CommandError
+		expected string
 	}{
 		{
-			name:     "single line",
-			input:    "hello world\n",
-			prefix:   "[app] ",
-			expected: []string{"[app] hello world"},
+			name:     "with stderr",
+			err:      CommandError{ExitCode: 1, Stderr: "file not found"},
+			expected: "command failed (exit 1): file not found",
 		},
 		{
-			name:     "multiple lines",
-			input:    "line1\nline2\nline3\n",
-			prefix:   "> ",
-			expected: []string{"> line1", "> line2", "> line3"},
+			name:     "without stderr",
+			err:      CommandError{ExitCode: 127, Stderr: ""},
+			expected: "command failed (exit 127)",
 		},
 		{
-			name:     "empty prefix",
-			input:    "test\n",
-			prefix:   "",
-			expected: []string{"test"},
-		},
-		{
-			name:     "empty input",
-			input:    "",
-			prefix:   "[p] ",
-			expected: []string{},
+			name:     "stderr with whitespace",
+			err:      CommandError{ExitCode: 2, Stderr: "  error  \n"},
+			expected: "command failed (exit 2): error",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reader := strings.NewReader(tt.input)
-			var buf bytes.Buffer
-
-			streamWithPrefix(reader, &buf, tt.prefix)
-
-			output := buf.String()
-			for _, exp := range tt.expected {
-				if !strings.Contains(output, exp) {
-					t.Errorf("output %q does not contain expected %q", output, exp)
-				}
+			got := tt.err.Error()
+			if got != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, got)
 			}
 		})
 	}
 }
 
-func TestStreamWithPrefix_LargeInput(t *testing.T) {
-	// Test with data larger than the 1024-byte buffer
-	longLine := strings.Repeat("x", 2000) + "\n"
-	reader := strings.NewReader(longLine)
-	var buf bytes.Buffer
+func TestCommandError_ErrorsAs(t *testing.T) {
+	r := &ExecResult{ExitCode: 42, Stderr: "oops"}
+	err := r.Err()
 
-	streamWithPrefix(reader, &buf, "[p] ")
-
-	output := buf.String()
-	if !strings.Contains(output, "[p] ") {
-		t.Error("expected prefix in output")
+	var cmdErr *CommandError
+	if !errors.As(err, &cmdErr) {
+		t.Fatal("errors.As should work with *CommandError")
+	}
+	if cmdErr.ExitCode != 42 {
+		t.Errorf("expected exit code 42, got %d", cmdErr.ExitCode)
 	}
 }

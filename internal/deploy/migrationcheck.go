@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -18,7 +19,7 @@ type MigrationCheckResult struct {
 
 // CheckMigrationState checks if migrations exist when entities are present
 // It runs docker exec commands to count files in migrations/ and src/Entity/
-func CheckMigrationState(client *ssh.Client, containerName string) (*MigrationCheckResult, error) {
+func CheckMigrationState(ctx context.Context, client ssh.Executor, containerName string) (*MigrationCheckResult, error) {
 	result := &MigrationCheckResult{}
 
 	// Count migration files (.php files in /app/migrations/)
@@ -26,7 +27,7 @@ func CheckMigrationState(client *ssh.Client, containerName string) (*MigrationCh
 		"docker exec %s sh -c 'find /app/migrations -name \"*.php\" -type f 2>/dev/null | wc -l'",
 		containerName,
 	)
-	migrationResult, err := client.Exec(migrationCmd)
+	migrationResult, err := client.Exec(ctx, migrationCmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check migrations: %w", err)
 	}
@@ -37,7 +38,7 @@ func CheckMigrationState(client *ssh.Client, containerName string) (*MigrationCh
 		"docker exec %s sh -c 'find /app/src/Entity -name \"*.php\" -type f 2>/dev/null | wc -l'",
 		containerName,
 	)
-	entityResult, err := client.Exec(entityCmd)
+	entityResult, err := client.Exec(ctx, entityCmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check entities: %w", err)
 	}
@@ -61,10 +62,10 @@ func parseCount(output string) int {
 }
 
 // HasMigrationWarningBeenShown checks if the warning marker exists on the server
-func HasMigrationWarningBeenShown(client *ssh.Client, appName string) bool {
+func HasMigrationWarningBeenShown(ctx context.Context, client ssh.Executor, appName string) bool {
 	markerPath := getMigrationWarningMarkerPath(appName)
 	cmd := fmt.Sprintf("test -f %s && echo 'exists'", markerPath)
-	result, err := client.Exec(cmd)
+	result, err := client.Exec(ctx, cmd)
 	if err != nil {
 		return false
 	}
@@ -72,19 +73,19 @@ func HasMigrationWarningBeenShown(client *ssh.Client, appName string) bool {
 }
 
 // MarkMigrationWarningShown creates the warning marker file on the server
-func MarkMigrationWarningShown(client *ssh.Client, appName string) error {
+func MarkMigrationWarningShown(ctx context.Context, client ssh.Executor, appName string) error {
 	markerPath := getMigrationWarningMarkerPath(appName)
 	// Ensure directory exists and create marker file
 	cmd := fmt.Sprintf("mkdir -p $(dirname %s) && touch %s", markerPath, markerPath)
-	_, err := client.Exec(cmd)
+	_, err := client.Exec(ctx, cmd)
 	return err
 }
 
 // ClearMigrationWarningMarker removes the marker when the problem is resolved
-func ClearMigrationWarningMarker(client *ssh.Client, appName string) error {
+func ClearMigrationWarningMarker(ctx context.Context, client ssh.Executor, appName string) error {
 	markerPath := getMigrationWarningMarkerPath(appName)
 	cmd := fmt.Sprintf("rm -f %s", markerPath)
-	_, err := client.Exec(cmd)
+	_, err := client.Exec(ctx, cmd)
 	return err
 }
 

@@ -26,6 +26,7 @@ func init() {
 }
 
 func runShell(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	serverName := args[0]
 
 	// Validate user if provided
@@ -51,5 +52,5 @@ func runShell(cmd *cobra.Command, args []string) error {
 	execCmd += fmt.Sprintf(" %s /bin/sh", conn.Project.Name)
 
 	// Execute interactive shell via SSH
-	return conn.Client.ExecStream(execCmd)
+	return conn.Client.ExecStream(ctx, execCmd)
 }

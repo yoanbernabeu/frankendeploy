@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -10,7 +11,7 @@ import (
 
 // HealthChecker performs health checks on deployed applications
 type HealthChecker struct {
-	client      *ssh.Client
+	client      ssh.Executor
 	containerID string
 	path        string
 	timeout     time.Duration
@@ -19,7 +20,7 @@ type HealthChecker struct {
 }
 
 // NewHealthChecker creates a new health checker
-func NewHealthChecker(client *ssh.Client, containerID, path string) *HealthChecker {
+func NewHealthChecker(client ssh.Executor, containerID, path string) *HealthChecker {
 	return &HealthChecker{
 		client:      client,
 		containerID: containerID,
@@ -47,15 +48,15 @@ func (h *HealthChecker) SetInterval(interval time.Duration) {
 
 // HealthResult contains the result of a health check
 type HealthResult struct {
-	Healthy     bool
-	StatusCode  int
-	Message     string
+	Healthy      bool
+	StatusCode   int
+	Message      string
 	ResponseTime time.Duration
-	Attempts    int
+	Attempts     int
 }
 
 // Check performs the health check with retries
-func (h *HealthChecker) Check() (*HealthResult, error) {
+func (h *HealthChecker) Check(ctx context.Context) (*HealthResult, error) {
 	result := &HealthResult{
 		Healthy: false,
 	}
@@ -71,7 +72,7 @@ func (h *HealthChecker) Check() (*HealthResult, error) {
 		}
 
 		// Check if container is running
-		containerCheck, _ := h.client.Exec(fmt.Sprintf(
+		containerCheck, _ := h.client.Exec(ctx, fmt.Sprintf(
 			"docker inspect %s --format '{{.State.Status}}'", h.containerID))
 
 		containerStatus := strings.TrimSpace(containerCheck.Stdout)
@@ -87,7 +88,7 @@ func (h *HealthChecker) Check() (*HealthResult, error) {
 			"docker exec %s curl -sf -w '%%{http_code}' -o /dev/null http://localhost%s",
 			h.containerID, h.path)
 
-		httpCheck, err := h.client.Exec(healthCmd)
+		httpCheck, err := h.client.Exec(ctx, healthCmd)
 		result.ResponseTime = time.Since(start)
 
 		if err == nil && httpCheck.ExitCode == 0 {
@@ -99,7 +100,9 @@ func (h *HealthChecker) Check() (*HealthResult, error) {
 
 		// Parse status code from output
 		if httpCheck.Stdout != "" {
-			_, _ = fmt.Sscanf(httpCheck.Stdout, "%d", &result.StatusCode)
+			if n, scanErr := fmt.Sscanf(httpCheck.Stdout, "%d", &result.StatusCode); n == 0 || scanErr != nil {
+				result.StatusCode = 0
+			}
 		}
 
 		result.Message = fmt.Sprintf("HTTP check failed (status: %d)", result.StatusCode)
@@ -110,8 +113,8 @@ func (h *HealthChecker) Check() (*HealthResult, error) {
 }
 
 // CheckContainer verifies if a container is running
-func (h *HealthChecker) CheckContainer() (bool, error) {
-	result, err := h.client.Exec(fmt.Sprintf(
+func (h *HealthChecker) CheckContainer(ctx context.Context) (bool, error) {
+	result, err := h.client.Exec(ctx, fmt.Sprintf(
 		"docker ps --filter name=%s --format '{{.Status}}'", h.containerID))
 
 	if err != nil {
@@ -122,8 +125,8 @@ func (h *HealthChecker) CheckContainer() (bool, error) {
 }
 
 // GetContainerLogs retrieves recent container logs
-func (h *HealthChecker) GetContainerLogs(lines int) (string, error) {
-	result, err := h.client.Exec(fmt.Sprintf(
+func (h *HealthChecker) GetContainerLogs(ctx context.Context, lines int) (string, error) {
+	result, err := h.client.Exec(ctx, fmt.Sprintf(
 		"docker logs %s --tail %d 2>&1", h.containerID, lines))
 
 	if err != nil {
@@ -134,7 +137,7 @@ func (h *HealthChecker) GetContainerLogs(lines int) (string, error) {
 }
 
 // WaitForContainer waits for a container to be in running state
-func (h *HealthChecker) WaitForContainer(timeout time.Duration) error {
+func (h *HealthChecker) WaitForContainer(ctx context.Context, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 
 	for {
@@ -142,7 +145,7 @@ func (h *HealthChecker) WaitForContainer(timeout time.Duration) error {
 			return fmt.Errorf("timeout waiting for container to start")
 		}
 
-		running, err := h.CheckContainer()
+		running, err := h.CheckContainer(ctx)
 		if err != nil {
 			return err
 		}

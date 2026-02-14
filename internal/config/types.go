@@ -78,6 +78,29 @@ type Hooks struct {
 	PostDeploy []string `yaml:"post_deploy,omitempty"`
 }
 
+var (
+	// DefaultSharedDirs are the default shared directories for deployment
+	DefaultSharedDirs = []string{"var/log", "var/sessions"}
+	// DefaultSharedFiles are the default shared files for deployment
+	DefaultSharedFiles = []string{".env.local"}
+)
+
+// EffectiveSharedDirs returns configured shared dirs or defaults
+func (d *DeployConfig) EffectiveSharedDirs() []string {
+	if len(d.SharedDirs) > 0 {
+		return d.SharedDirs
+	}
+	return DefaultSharedDirs
+}
+
+// EffectiveSharedFiles returns configured shared files or defaults
+func (d *DeployConfig) EffectiveSharedFiles() []string {
+	if len(d.SharedFiles) > 0 {
+		return d.SharedFiles
+	}
+	return DefaultSharedFiles
+}
+
 // EnvConfig holds environment variable configuration
 type EnvConfig struct {
 	Dev  map[string]string `yaml:"dev,omitempty"`

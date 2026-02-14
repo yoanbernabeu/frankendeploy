@@ -28,6 +28,7 @@ func init() {
 }
 
 func runExec(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	serverName := args[0]
 	command := strings.Join(args[1:], " ")
 
@@ -57,5 +58,5 @@ func runExec(cmd *cobra.Command, args []string) error {
 	dockerExec += fmt.Sprintf(" %s %s", conn.Project.Name, command)
 
 	// Execute and stream output
-	return conn.Client.ExecStream(dockerExec)
+	return conn.Client.ExecStream(ctx, dockerExec)
 }

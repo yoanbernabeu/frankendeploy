@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -108,6 +109,7 @@ func init() {
 }
 
 func runEnvSet(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	serverName := args[0]
 	keyValue := args[1]
 
@@ -134,12 +136,12 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 
 	// Ensure directory exists
 	mkdirCmd := fmt.Sprintf("mkdir -p $(dirname %s)", envFile)
-	if _, err := conn.Client.Exec(mkdirCmd); err != nil {
+	if _, err := conn.Client.Exec(ctx, mkdirCmd); err != nil {
 		PrintWarning("Could not create directory: %v", err)
 	}
 
 	// Read existing env file
-	result, _ := conn.Client.Exec(fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
+	result, _ := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
 	existingContent := result.Stdout
 
 	// Parse existing variables
@@ -155,7 +157,7 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to generate delimiter: %w", err)
 	}
 	writeCmd := fmt.Sprintf("cat > %s << '%s'\n%s%s", envFile, delim, newContent, delim)
-	if _, err := conn.Client.Exec(writeCmd); err != nil {
+	if _, err := conn.Client.Exec(ctx, writeCmd); err != nil {
 		return fmt.Errorf("failed to write env file: %w", err)
 	}
 
@@ -163,7 +165,7 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 
 	// Reload container if requested
 	if envSetReload {
-		if err := reloadContainer(conn.Client, conn.Project.Name); err != nil {
+		if err := reloadContainer(ctx, conn.Client, conn.Project.Name); err != nil {
 			PrintWarning("Failed to reload: %v", err)
 			PrintInfo("Changes will take effect on next deployment")
 		} else {
@@ -177,6 +179,7 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 }
 
 func runEnvList(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	serverName := args[0]
 
 	conn, err := ConnectToServer(serverName)
@@ -187,7 +190,7 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 
 	envFile := constants.AppEnvFilePath(conn.Project.Name)
 
-	result, err := conn.Client.Exec(fmt.Sprintf("cat %s 2>/dev/null", envFile))
+	result, err := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null", envFile))
 	if err != nil || result.Stdout == "" {
 		PrintInfo("No environment variables configured on %s", serverName)
 		return nil
@@ -209,6 +212,7 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 }
 
 func runEnvGet(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	serverName := args[0]
 	key := args[1]
 
@@ -225,7 +229,7 @@ func runEnvGet(cmd *cobra.Command, args []string) error {
 
 	envFile := constants.AppEnvFilePath(conn.Project.Name)
 
-	result, _ := conn.Client.Exec(fmt.Sprintf("cat %s 2>/dev/null", envFile))
+	result, _ := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null", envFile))
 	envVars := parseEnvContent(result.Stdout)
 
 	if value, ok := envVars[key]; ok {
@@ -238,6 +242,7 @@ func runEnvGet(cmd *cobra.Command, args []string) error {
 }
 
 func runEnvRemove(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	serverName := args[0]
 	key := args[1]
 
@@ -254,7 +259,7 @@ func runEnvRemove(cmd *cobra.Command, args []string) error {
 
 	envFile := constants.AppEnvFilePath(conn.Project.Name)
 
-	result, _ := conn.Client.Exec(fmt.Sprintf("cat %s 2>/dev/null", envFile))
+	result, _ := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null", envFile))
 	envVars := parseEnvContent(result.Stdout)
 
 	if _, ok := envVars[key]; !ok {
@@ -269,7 +274,7 @@ func runEnvRemove(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to generate delimiter: %w", err)
 	}
 	writeCmd := fmt.Sprintf("cat > %s << '%s'\n%s%s", envFile, delim, newContent, delim)
-	if _, err := conn.Client.Exec(writeCmd); err != nil {
+	if _, err := conn.Client.Exec(ctx, writeCmd); err != nil {
 		return fmt.Errorf("failed to write env file: %w", err)
 	}
 
@@ -278,6 +283,7 @@ func runEnvRemove(cmd *cobra.Command, args []string) error {
 }
 
 func runEnvPush(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	serverName := args[0]
 	localFile := args[1]
 
@@ -316,12 +322,12 @@ func runEnvPush(cmd *cobra.Command, args []string) error {
 
 	// Ensure directory exists
 	mkdirCmd := fmt.Sprintf("mkdir -p $(dirname %s)", envFile)
-	if _, err := conn.Client.Exec(mkdirCmd); err != nil {
+	if _, err := conn.Client.Exec(ctx, mkdirCmd); err != nil {
 		PrintWarning("Could not create directory: %v", err)
 	}
 
 	// Read existing and merge
-	result, _ := conn.Client.Exec(fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
+	result, _ := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
 	existingVars := parseEnvContent(result.Stdout)
 	newVars := parseEnvContent(string(content))
 
@@ -337,7 +343,7 @@ func runEnvPush(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to generate delimiter: %w", err)
 	}
 	writeCmd := fmt.Sprintf("cat > %s << '%s'\n%s%s", envFile, delim, mergedContent, delim)
-	if _, err := conn.Client.Exec(writeCmd); err != nil {
+	if _, err := conn.Client.Exec(ctx, writeCmd); err != nil {
 		return fmt.Errorf("failed to write env file: %w", err)
 	}
 
@@ -345,7 +351,7 @@ func runEnvPush(cmd *cobra.Command, args []string) error {
 
 	// Reload container if requested
 	if envPushReload {
-		if err := reloadContainer(conn.Client, conn.Project.Name); err != nil {
+		if err := reloadContainer(ctx, conn.Client, conn.Project.Name); err != nil {
 			PrintWarning("Failed to reload: %v", err)
 			PrintInfo("Changes will take effect on next deployment")
 		} else {
@@ -359,6 +365,7 @@ func runEnvPush(cmd *cobra.Command, args []string) error {
 }
 
 func runEnvPull(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	serverName := args[0]
 
 	conn, err := ConnectToServer(serverName)
@@ -369,7 +376,7 @@ func runEnvPull(cmd *cobra.Command, args []string) error {
 
 	envFile := constants.AppEnvFilePath(conn.Project.Name)
 
-	result, err := conn.Client.Exec(fmt.Sprintf("cat %s 2>/dev/null", envFile))
+	result, err := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null", envFile))
 	if err != nil || result.Stdout == "" {
 		PrintInfo("No environment variables to pull from %s", serverName)
 		return nil
@@ -425,11 +432,11 @@ func buildEnvContent(vars map[string]string) string {
 }
 
 // reloadContainer performs a rolling restart to apply env changes with minimal downtime
-func reloadContainer(client *ssh.Client, appName string) error {
+func reloadContainer(ctx context.Context, client *ssh.Client, appName string) error {
 	PrintInfo("Reloading container...")
 
 	// Get current container info
-	result, err := client.Exec(fmt.Sprintf("docker inspect %s --format '{{.Config.Image}}'", appName))
+	result, err := client.Exec(ctx, fmt.Sprintf("docker inspect %s --format '{{.Config.Image}}'", appName))
 	if err != nil || result.ExitCode != 0 {
 		return fmt.Errorf("container not running")
 	}
@@ -448,39 +455,42 @@ func reloadContainer(client *ssh.Client, appName string) error {
 		-v %s/shared/.env.local:/app/.env.local:ro \
 		%s`, tempName, constants.NetworkName, constants.ContainerUser, constants.AppPort, appPath, imageName)
 
-	result, err = client.Exec(startCmd)
-	if err != nil || result.ExitCode != 0 {
-		return fmt.Errorf("failed to start new container: %s", result.Stderr)
+	result, err = client.Exec(ctx, startCmd)
+	if err != nil {
+		return fmt.Errorf("failed to start new container: %w", err)
+	}
+	if err := result.Err(); err != nil {
+		return fmt.Errorf("failed to start new container: %w", err)
 	}
 
 	// Wait for new container to be healthy
 	PrintInfo("Waiting for new container to be ready...")
 	for i := 0; i < 30; i++ {
-		result, _ := client.Exec(fmt.Sprintf("docker inspect %s --format '{{.State.Health.Status}}' 2>/dev/null || echo 'starting'", tempName))
+		result, _ := client.Exec(ctx, fmt.Sprintf("docker inspect %s --format '{{.State.Health.Status}}' 2>/dev/null || echo 'starting'", tempName))
 		status := strings.TrimSpace(result.Stdout)
 		if status == "healthy" {
 			break
 		}
 		if i == 29 {
 			// Cleanup and fail
-			if _, err := client.Exec(fmt.Sprintf("docker rm -f %s", tempName)); err != nil {
+			if _, err := client.Exec(ctx, fmt.Sprintf("docker rm -f %s", tempName)); err != nil {
 				PrintWarning("Failed to cleanup temporary container: %v", err)
 			}
 			return fmt.Errorf("new container failed health check")
 		}
-		if _, err := client.Exec("sleep 2"); err != nil {
+		if _, err := client.Exec(ctx, "sleep 2"); err != nil {
 			PrintVerbose("Sleep interrupted: %v", err)
 		}
 	}
 
 	// Stop old container and rename new one
-	if _, err := client.Exec(fmt.Sprintf("docker stop %s", appName)); err != nil {
+	if _, err := client.Exec(ctx, fmt.Sprintf("docker stop %s", appName)); err != nil {
 		PrintWarning("Failed to stop old container: %v", err)
 	}
-	if _, err := client.Exec(fmt.Sprintf("docker rm %s", appName)); err != nil {
+	if _, err := client.Exec(ctx, fmt.Sprintf("docker rm %s", appName)); err != nil {
 		PrintWarning("Failed to remove old container: %v", err)
 	}
-	if _, err := client.Exec(fmt.Sprintf("docker rename %s %s", tempName, appName)); err != nil {
+	if _, err := client.Exec(ctx, fmt.Sprintf("docker rename %s %s", tempName, appName)); err != nil {
 		PrintWarning("Failed to rename container: %v", err)
 	}
 
