@@ -1,20 +1,25 @@
 package generator
 
+import "github.com/yoanbernabeu/frankendeploy/internal/constants"
+
 // Centralized constants for all generated Docker artifacts.
 // These values are used in templates via template functions and in Go code.
+//
+// Shared constants (AppPort, DefaultUID, DefaultGID, NetworkName) are sourced
+// from internal/constants to avoid duplication.
 
 const (
-	// Ports
-	AppPort         = "8080"
+	// Ports — sourced from constants package
+	AppPort         = constants.AppPort
 	MetricsPort     = "2019"
 	DevExternalPort = "8000"
 
-	// User/Group IDs for non-root container execution
-	DefaultUID = "1000"
-	DefaultGID = "1000"
+	// User/Group IDs — sourced from constants package
+	DefaultUID = constants.ContainerUID
+	DefaultGID = constants.ContainerGID
 
-	// Networking
-	NetworkName = "frankendeploy"
+	// Networking — sourced from constants package
+	NetworkName = constants.NetworkName
 
 	// Database wait defaults (entrypoint script)
 	DefaultDBWaitMaxAttempts = 30
