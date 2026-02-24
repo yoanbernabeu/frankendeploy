@@ -130,6 +130,24 @@ func ValidateProjectConfig(config *ProjectConfig) ValidationErrors {
 		})
 	}
 
+	for key := range config.Env.Dev {
+		if err := security.ValidateEnvKey(key); err != nil {
+			errors = append(errors, ValidationError{
+				Field:   "env.dev",
+				Message: fmt.Sprintf("invalid key %q: %s", key, err.Error()),
+			})
+		}
+	}
+
+	for key := range config.Env.Prod {
+		if err := security.ValidateEnvKey(key); err != nil {
+			errors = append(errors, ValidationError{
+				Field:   "env.prod",
+				Message: fmt.Sprintf("invalid key %q: %s", key, err.Error()),
+			})
+		}
+	}
+
 	return errors
 }
 

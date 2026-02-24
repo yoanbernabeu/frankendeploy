@@ -317,6 +317,46 @@ func TestValidateProjectConfig(t *testing.T) {
 			},
 			wantErrors: false,
 		},
+		{
+			name: "valid env keys",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Env: EnvConfig{
+					Dev:  map[string]string{"APP_ENV": "dev", "DATABASE_URL": "sqlite://db"},
+					Prod: map[string]string{"APP_SECRET": "abc123"},
+				},
+			},
+			wantErrors: false,
+		},
+		{
+			name: "invalid dev env key with colon",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Env: EnvConfig{
+					Dev: map[string]string{"invalid:key": "value"},
+				},
+			},
+			wantErrors: true,
+		},
+		{
+			name: "invalid prod env key with leading dash",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP: PHPConfig{
+					Version: "8.3",
+				},
+				Env: EnvConfig{
+					Prod: map[string]string{"-BAD_KEY": "value"},
+				},
+			},
+			wantErrors: true,
+		},
 	}
 
 	for _, tt := range tests {

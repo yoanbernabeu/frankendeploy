@@ -132,6 +132,80 @@ func TestValidateDockerfileData_DangerousExtraCommand(t *testing.T) {
 	}
 }
 
+func TestValidateDockerfileData_ExtraCommandMustBeDockerfileInstruction(t *testing.T) {
+	// Valid Dockerfile instructions should pass
+	for _, cmd := range []string{"RUN echo hello", "COPY foo bar", "ARG MY_VAR=1", "ENV MY_VAR=1", "WORKDIR /app"} {
+		data := DockerfileData{
+			PHP: config.PHPConfig{Version: "8.3"},
+			Dockerfile: config.DockerfileConfig{
+				ExtraCommands: []string{cmd},
+			},
+		}
+		if err := ValidateDockerfileData(data); err != nil {
+			t.Errorf("unexpected error for valid instruction %q: %v", cmd, err)
+		}
+	}
+
+	// Non-instruction commands should fail
+	for _, cmd := range []string{"echo hello", "apt-get install curl", "chmod +x foo"} {
+		data := DockerfileData{
+			PHP: config.PHPConfig{Version: "8.3"},
+			Dockerfile: config.DockerfileConfig{
+				ExtraCommands: []string{cmd},
+			},
+		}
+		if err := ValidateDockerfileData(data); err == nil {
+			t.Errorf("expected error for non-instruction command %q", cmd)
+		}
+	}
+}
+
+func TestValidateDockerfileData_IniValueHeredocInjection(t *testing.T) {
+	// Normal INI values should pass
+	data := DockerfileData{
+		PHP: config.PHPConfig{
+			Version:   "8.3",
+			IniValues: []string{"memory_limit=256M", "upload_max_filesize=50M"},
+		},
+	}
+	if err := ValidateDockerfileData(data); err != nil {
+		t.Fatalf("unexpected error for valid ini values: %v", err)
+	}
+
+	// INI value containing EOF should fail (heredoc injection)
+	data = DockerfileData{
+		PHP: config.PHPConfig{
+			Version:   "8.3",
+			IniValues: []string{"memory_limit=256M", "EOF"},
+		},
+	}
+	if err := ValidateDockerfileData(data); err == nil {
+		t.Error("expected error for ini value that is exactly EOF")
+	}
+
+	// INI value containing EOF with whitespace should also fail
+	data = DockerfileData{
+		PHP: config.PHPConfig{
+			Version:   "8.3",
+			IniValues: []string{"  EOF  "},
+		},
+	}
+	if err := ValidateDockerfileData(data); err == nil {
+		t.Error("expected error for ini value that is EOF with whitespace")
+	}
+
+	// INI value containing EOF as part of a larger string should pass
+	data = DockerfileData{
+		PHP: config.PHPConfig{
+			Version:   "8.3",
+			IniValues: []string{"user_agent=MyEOFApp"},
+		},
+	}
+	if err := ValidateDockerfileData(data); err != nil {
+		t.Fatalf("unexpected error for ini value containing EOF as substring: %v", err)
+	}
+}
+
 func TestValidateDockerfileData_InvalidFrankenPHPVersion(t *testing.T) {
 	data := DockerfileData{
 		PHP:               config.PHPConfig{Version: "8.3"},
@@ -195,6 +269,70 @@ func TestValidateComposeData_DBVersionRequired(t *testing.T) {
 	}
 	if err := ValidateComposeData(data); err == nil {
 		t.Error("expected error for missing DB version with pgsql driver")
+	}
+}
+
+func TestValidateComposeData_InvalidEnvKey(t *testing.T) {
+	data := ComposeData{
+		Name: "my-app",
+		Env: config.EnvConfig{
+			Dev: map[string]string{
+				"VALID_KEY":  "ok",
+				"invalid:key": "bad",
+			},
+		},
+	}
+	if err := ValidateComposeData(data); err == nil {
+		t.Error("expected error for invalid env key containing colon")
+	}
+}
+
+func TestValidateComposeData_InvalidProdEnvKey(t *testing.T) {
+	data := ComposeData{
+		Name: "my-app",
+		Env: config.EnvConfig{
+			Prod: map[string]string{
+				"-LEADING_DASH": "bad",
+			},
+		},
+	}
+	if err := ValidateComposeData(data); err == nil {
+		t.Error("expected error for invalid prod env key with leading dash")
+	}
+}
+
+func TestValidateComposeData_ValidEnvKeys(t *testing.T) {
+	data := ComposeData{
+		Name: "my-app",
+		Env: config.EnvConfig{
+			Dev:  map[string]string{"APP_ENV": "dev", "DATABASE_URL": "sqlite://db"},
+			Prod: map[string]string{"APP_SECRET": "abc123"},
+		},
+	}
+	if err := ValidateComposeData(data); err != nil {
+		t.Fatalf("unexpected error for valid env keys: %v", err)
+	}
+}
+
+func TestValidateComposeData_DatabaseVersionUnsafeForImageTag(t *testing.T) {
+	data := ComposeData{
+		Name:     "my-app",
+		Database: config.DatabaseConfig{Driver: "pgsql", Version: "16 (Ubuntu)"},
+	}
+	if err := ValidateComposeData(data); err == nil {
+		t.Error("expected error for database version with spaces/parens (unsafe for Docker image tag)")
+	}
+}
+
+func TestValidateComposeData_DatabaseVersionValidTag(t *testing.T) {
+	for _, v := range []string{"16", "8.0", "16.2", "8.0.35"} {
+		data := ComposeData{
+			Name:     "my-app",
+			Database: config.DatabaseConfig{Driver: "pgsql", Version: v},
+		}
+		if err := ValidateComposeData(data); err != nil {
+			t.Errorf("unexpected error for valid DB version %q: %v", v, err)
+		}
 	}
 }
 
