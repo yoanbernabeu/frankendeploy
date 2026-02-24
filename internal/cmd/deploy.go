@@ -492,7 +492,8 @@ func rollbackNewContainer(ctx context.Context, client *ssh.Client, state *deploy
 	}
 }
 
-// runHealthCheckOnContainer runs a health check against a specific container name.
+// runHealthCheckOnContainer runs a health check against a specific container name
+// using the centralized HealthChecker with retries, timeout, and proper status code parsing.
 func runHealthCheckOnContainer(ctx context.Context, client *ssh.Client, cfg *config.ProjectConfig, containerName string) error {
 	healthPath := cfg.Deploy.HealthcheckPath
 	if healthPath == "" {
@@ -503,20 +504,16 @@ func runHealthCheckOnContainer(ctx context.Context, client *ssh.Client, cfg *con
 		return fmt.Errorf("invalid health check path: %w", err)
 	}
 
-	// Wait for container to be ready
-	time.Sleep(5 * time.Second)
+	// Wait for container to be ready before health checks
+	time.Sleep(constants.PreHealthSleep)
 
-	// Check container is running
-	result, err := client.Exec(ctx, fmt.Sprintf("docker ps --filter name=%s --format '{{.Status}}'", containerName))
-	if err != nil || result.Stdout == "" {
-		return fmt.Errorf("container %s not running", containerName)
+	hc := deploy.NewHealthChecker(client, containerName, healthPath, constants.AppPort)
+	result, err := hc.Check(ctx)
+	if err != nil {
+		return fmt.Errorf("health check error: %w", err)
 	}
-
-	// Check health endpoint (port 8080 for non-root execution)
-	healthCmd := fmt.Sprintf("docker exec %s curl -sf http://localhost:%s%s", containerName, constants.AppPort, healthPath)
-	result, err = client.Exec(ctx, healthCmd)
-	if err != nil || result.ExitCode != 0 {
-		return fmt.Errorf("health check failed on %s", containerName)
+	if !result.Healthy {
+		return fmt.Errorf("health check failed on %s: %s (after %d attempts)", containerName, result.Message, result.Attempts)
 	}
 
 	return nil
