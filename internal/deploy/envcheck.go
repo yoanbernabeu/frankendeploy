@@ -5,10 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
+	"github.com/yoanbernabeu/frankendeploy/internal/constants"
 	"github.com/yoanbernabeu/frankendeploy/internal/security"
 	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
 )
@@ -45,7 +45,7 @@ func CheckEnvVars(ctx context.Context, client ssh.Executor, cfg *config.ProjectC
 	}
 
 	// Get the env file path
-	envFile := filepath.Join("/opt/frankendeploy/apps", cfg.Name, "shared", ".env.local")
+	envFile := constants.AppEnvFilePath(cfg.Name)
 
 	// Read existing env variables
 	execResult, _ := client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
@@ -140,7 +140,7 @@ func SaveGeneratedSecrets(ctx context.Context, client ssh.Executor, appName stri
 		return nil
 	}
 
-	envFile := filepath.Join("/opt/frankendeploy/apps", appName, "shared", ".env.local")
+	envFile := constants.AppEnvFilePath(appName)
 
 	// Ensure directory exists
 	mkdirCmd := fmt.Sprintf("mkdir -p $(dirname %s)", envFile)
@@ -169,7 +169,7 @@ func SaveGeneratedSecrets(ctx context.Context, client ssh.Executor, appName stri
 	}
 
 	// Fix permissions for container user
-	if _, err := client.Exec(ctx, fmt.Sprintf("sudo chown 1000:1000 %s 2>/dev/null || true", envFile)); err != nil {
+	if _, err := client.Exec(ctx, fmt.Sprintf("sudo chown %s %s 2>/dev/null || true", constants.ContainerUser, envFile)); err != nil {
 		// Non-critical: permissions may need manual fix
 		_ = err
 	}

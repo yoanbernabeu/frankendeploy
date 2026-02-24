@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yoanbernabeu/frankendeploy/internal/constants"
 	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
 )
 
@@ -91,7 +92,7 @@ func ClearMigrationWarningMarker(ctx context.Context, client ssh.Executor, appNa
 
 // getMigrationWarningMarkerPath returns the path to the warning marker file
 func getMigrationWarningMarkerPath(appName string) string {
-	return filepath.Join("/opt/frankendeploy/apps", appName, "shared", ".migration_warning_shown")
+	return filepath.Join(constants.AppSharedPath(appName), ".migration_warning_shown")
 }
 
 // FormatMigrationWarning formats the warning message for display

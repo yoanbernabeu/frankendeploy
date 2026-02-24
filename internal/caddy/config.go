@@ -3,9 +3,11 @@ package caddy
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"text/template"
 
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
+	"github.com/yoanbernabeu/frankendeploy/internal/constants"
 	"github.com/yoanbernabeu/frankendeploy/internal/security"
 )
 
@@ -61,7 +63,7 @@ func (g *ConfigGenerator) GenerateAppConfig(app AppConfig) (string, error) {
 	}
 
 	if app.Port == 0 {
-		app.Port = 8080 // FrankenPHP default port (non-root)
+		app.Port, _ = strconv.Atoi(constants.AppPort)
 	}
 
 	var buf bytes.Buffer
@@ -90,7 +92,7 @@ import /config/apps/*.caddy
 `
 
 	if email == "" {
-		email = "admin@localhost"
+		email = constants.DefaultCertEmail
 	}
 
 	return fmt.Sprintf(tmpl, email), nil
@@ -98,10 +100,11 @@ import /config/apps/*.caddy
 
 // AppConfigFromProject creates AppConfig from project config
 func AppConfigFromProject(cfg *config.ProjectConfig, domain string) AppConfig {
+	port, _ := strconv.Atoi(constants.AppPort)
 	return AppConfig{
 		Name:   cfg.Name,
 		Domain: domain,
-		Port:   8080, // FrankenPHP default port (non-root)
+		Port:   port,
 		TLS:    true,
 	}
 }
@@ -132,9 +135,9 @@ func WriteAppConfigCommands(appName, configContent string) ([]string, error) {
 	}
 	return []string{
 		// Ensure directory exists
-		`mkdir -p /opt/frankendeploy/caddy/apps`,
+		fmt.Sprintf("mkdir -p %s", constants.CaddyAppsDir),
 		// Write config file (escaped for shell with random heredoc delimiter)
-		fmt.Sprintf("cat > /opt/frankendeploy/caddy/apps/%s.caddy << '%s'\n%s\n%s", appName, delim, configContent, delim),
+		fmt.Sprintf("cat > %s << '%s'\n%s\n%s", constants.CaddyAppConfig(appName), delim, configContent, delim),
 		// Reload Caddy inside container
 		`docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile`,
 	}, nil
@@ -143,7 +146,7 @@ func WriteAppConfigCommands(appName, configContent string) ([]string, error) {
 // RemoveAppConfigCommands returns SSH commands to remove app config and reload
 func RemoveAppConfigCommands(appName string) []string {
 	return []string{
-		fmt.Sprintf(`rm -f /opt/frankendeploy/caddy/apps/%s.caddy`, appName),
+		fmt.Sprintf("rm -f %s", constants.CaddyAppConfig(appName)),
 		`docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile`,
 	}
 }
