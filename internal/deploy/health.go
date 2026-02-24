@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yoanbernabeu/frankendeploy/internal/constants"
 	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
 )
 
@@ -14,20 +15,22 @@ type HealthChecker struct {
 	client      ssh.Executor
 	containerID string
 	path        string
+	port        string
 	timeout     time.Duration
 	retries     int
 	interval    time.Duration
 }
 
-// NewHealthChecker creates a new health checker
-func NewHealthChecker(client ssh.Executor, containerID, path string) *HealthChecker {
+// NewHealthChecker creates a new health checker with sensible defaults from constants.
+func NewHealthChecker(client ssh.Executor, containerID, path, port string) *HealthChecker {
 	return &HealthChecker{
 		client:      client,
 		containerID: containerID,
 		path:        path,
-		timeout:     30 * time.Second,
-		retries:     5,
-		interval:    2 * time.Second,
+		port:        port,
+		timeout:     constants.HealthCheckTimeout,
+		retries:     constants.HealthCheckRetries,
+		interval:    constants.HealthCheckInterval,
 	}
 }
 
@@ -85,21 +88,27 @@ func (h *HealthChecker) Check(ctx context.Context) (*HealthResult, error) {
 		// Check HTTP endpoint
 		start := time.Now()
 		healthCmd := fmt.Sprintf(
-			"docker exec %s curl -sf -w '%%{http_code}' -o /dev/null http://localhost%s",
-			h.containerID, h.path)
+			"docker exec %s curl -sf -w '%%{http_code}' -o /dev/null http://localhost:%s%s",
+			h.containerID, h.port, h.path)
 
 		httpCheck, err := h.client.Exec(ctx, healthCmd)
 		result.ResponseTime = time.Since(start)
 
 		if err == nil && httpCheck.ExitCode == 0 {
 			result.Healthy = true
-			result.StatusCode = 200
+			result.StatusCode = 200 // default if parsing fails
+			if httpCheck.Stdout != "" {
+				var code int
+				if n, scanErr := fmt.Sscanf(strings.TrimSpace(httpCheck.Stdout), "%d", &code); n == 1 && scanErr == nil {
+					result.StatusCode = code
+				}
+			}
 			result.Message = "healthy"
 			return result, nil
 		}
 
 		// Parse status code from output
-		if httpCheck.Stdout != "" {
+		if httpCheck != nil && httpCheck.Stdout != "" {
 			if n, scanErr := fmt.Sscanf(httpCheck.Stdout, "%d", &result.StatusCode); n == 0 || scanErr != nil {
 				result.StatusCode = 0
 			}
