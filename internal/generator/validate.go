@@ -13,7 +13,15 @@ var (
 	phpExtensionRegex    = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 	extraPackageRegex    = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._+-]*$`)
 	frankenPHPVersionRgx = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+	dbVersionTagRegex    = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 )
+
+// dockerfileInstructions are the valid Dockerfile instruction keywords
+// that ExtraCommands must start with.
+var dockerfileInstructions = []string{
+	"RUN ", "COPY ", "ADD ", "ARG ", "ENV ", "WORKDIR ",
+	"EXPOSE ", "LABEL ", "USER ", "VOLUME ", "HEALTHCHECK ",
+}
 
 // shellInjectionPatterns are sequences blocked in extra commands.
 var shellInjectionPatterns = []string{"$(", "`", ";", "&&", "||", "|", ">", "<", "\n", "\r"}
@@ -48,6 +56,15 @@ func ValidateDockerfileData(data DockerfileData) error {
 				return fmt.Errorf("extra command contains potentially dangerous sequence %q", pattern)
 			}
 		}
+		if !isValidDockerfileInstruction(cmd) {
+			return fmt.Errorf("extra command %q must start with a valid Dockerfile instruction (RUN, COPY, ARG, ENV, etc.)", cmd)
+		}
+	}
+
+	for _, ini := range data.PHP.IniValues {
+		if err := validateIniValue(ini); err != nil {
+			return fmt.Errorf("invalid PHP ini value: %w", err)
+		}
 	}
 
 	if data.FrankenPHPVersion != "" && !frankenPHPVersionRgx.MatchString(data.FrankenPHPVersion) {
@@ -70,7 +87,52 @@ func ValidateComposeData(data ComposeData) error {
 		if data.Database.Version == "" {
 			return fmt.Errorf("compose data: database version is required for driver %q", data.Database.Driver)
 		}
+		if !dbVersionTagRegex.MatchString(data.Database.Version) {
+			return fmt.Errorf("compose data: database version %q contains characters unsafe for Docker image tags", data.Database.Version)
+		}
 	}
 
+	if err := validateEnvKeys(data.Env.Dev); err != nil {
+		return fmt.Errorf("compose data: env.dev: %w", err)
+	}
+	if err := validateEnvKeys(data.Env.Prod); err != nil {
+		return fmt.Errorf("compose data: env.prod: %w", err)
+	}
+
+	return nil
+}
+
+// isValidDockerfileInstruction checks that a command starts with a recognized
+// Dockerfile instruction keyword.
+func isValidDockerfileInstruction(cmd string) bool {
+	upper := strings.ToUpper(cmd)
+	for _, instr := range dockerfileInstructions {
+		if strings.HasPrefix(upper, instr) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateIniValue checks that a PHP INI value does not break the Dockerfile
+// COPY heredoc by containing the EOF delimiter on its own line.
+func validateIniValue(value string) error {
+	for _, line := range strings.Split(value, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "EOF" {
+			return fmt.Errorf("ini value must not contain a line that is exactly %q (conflicts with Dockerfile heredoc delimiter)", "EOF")
+		}
+	}
+	return nil
+}
+
+// validateEnvKeys validates that all environment variable keys in a map
+// are safe for YAML rendering.
+func validateEnvKeys(env map[string]string) error {
+	for key := range env {
+		if err := security.ValidateEnvKey(key); err != nil {
+			return fmt.Errorf("invalid key %q: %w", key, err)
+		}
+	}
 	return nil
 }
