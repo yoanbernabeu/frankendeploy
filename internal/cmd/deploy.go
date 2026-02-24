@@ -17,6 +17,7 @@ import (
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
 	"github.com/yoanbernabeu/frankendeploy/internal/constants"
 	"github.com/yoanbernabeu/frankendeploy/internal/deploy"
+	"github.com/yoanbernabeu/frankendeploy/internal/generator"
 	"github.com/yoanbernabeu/frankendeploy/internal/security"
 	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
 )
@@ -734,6 +735,12 @@ func deployManagedDatabase(ctx context.Context, client *ssh.Client, cfg *config.
 	dbName := strings.ReplaceAll(cfg.Name, "-", "_")
 	credentialsFile := filepath.Join(appPath, "shared", ".db_credentials")
 
+	// Get driver info from registry (single source of truth)
+	info, err := generator.GetDBDriverInfo(cfg.Database.Driver)
+	if err != nil {
+		return "", fmt.Errorf("unsupported database driver for managed mode: %s", cfg.Database.Driver)
+	}
+
 	// Check if database container already exists and is running
 	checkResult, checkErr := client.Exec(ctx, fmt.Sprintf("docker ps -q -f name=%s", dbContainerName))
 	if checkErr == nil && strings.TrimSpace(checkResult.Stdout) != "" {
@@ -752,40 +759,20 @@ func deployManagedDatabase(ctx context.Context, client *ssh.Client, cfg *config.
 		return "", err
 	}
 
-	// Build DATABASE_URL based on driver
-	var databaseURL string
-	var dockerImage string
-	var dockerEnv string
-	var dockerPort string
-
-	switch cfg.Database.Driver {
-	case "pgsql":
-		version := cfg.Database.Version
-		if version == "" {
-			version = "16"
-		}
-		dockerImage = fmt.Sprintf("postgres:%s-alpine", version)
-		dockerEnv = fmt.Sprintf("-e POSTGRES_USER=%s -e POSTGRES_PASSWORD=%s -e POSTGRES_DB=%s",
-			security.ShellEscape(dbUser), security.ShellEscape(dbPassword), security.ShellEscape(dbName))
-		dockerPort = "5432"
-		databaseURL = fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?serverVersion=%s&charset=utf8",
-			dbUser, dbPassword, dbContainerName, dockerPort, dbName, version)
-
-	case "mysql":
-		version := cfg.Database.Version
-		if version == "" {
-			version = "8.0"
-		}
-		dockerImage = fmt.Sprintf("mysql:%s", version)
-		dockerEnv = fmt.Sprintf("-e MYSQL_ROOT_PASSWORD=%s -e MYSQL_USER=%s -e MYSQL_PASSWORD=%s -e MYSQL_DATABASE=%s",
-			security.ShellEscape(dbPassword), security.ShellEscape(dbUser), security.ShellEscape(dbPassword), security.ShellEscape(dbName))
-		dockerPort = "3306"
-		databaseURL = fmt.Sprintf("mysql://%s:%s@%s:%s/%s?serverVersion=%s&charset=utf8mb4",
-			dbUser, dbPassword, dbContainerName, dockerPort, dbName, version)
-
-	default:
-		return "", fmt.Errorf("unsupported database driver for managed mode: %s", cfg.Database.Driver)
+	// Use configured version or registry default
+	version := cfg.Database.Version
+	if version == "" {
+		version = info.DefaultVersion
 	}
+
+	// Build database configuration from registry
+	dockerImage := info.FullImage(version)
+	dockerEnv := info.BuildEnvArgs(
+		security.ShellEscape(dbUser),
+		security.ShellEscape(dbPassword),
+		security.ShellEscape(dbName),
+	)
+	databaseURL := info.BuildDatabaseURL(dbUser, dbPassword, dbContainerName, dbName, version)
 
 	// Stop and remove existing container if exists (for recreation)
 	stopAndRemoveContainer(ctx, client, dbContainerName)
@@ -795,13 +782,13 @@ func deployManagedDatabase(ctx context.Context, client *ssh.Client, cfg *config.
 		--network %s \
 		--restart unless-stopped \
 		%s \
-		-v %s-data:/var/lib/%s \
+		-v %s-data:%s \
 		%s`,
 		dbContainerName,
 		constants.NetworkName,
 		dockerEnv,
 		dbContainerName,
-		map[string]string{"pgsql": "postgresql/data", "mysql": "mysql"}[cfg.Database.Driver],
+		info.DataVolumePath,
 		dockerImage)
 
 	result, err := client.Exec(ctx, dbRunCmd)
@@ -823,14 +810,12 @@ func deployManagedDatabase(ctx context.Context, client *ssh.Client, cfg *config.
 	// Wait for database to be ready
 	PrintVerbose("Waiting for database to be ready...")
 	for i := 0; i < 30; i++ {
-		var checkCmd string
-		if cfg.Database.Driver == "pgsql" {
-			checkCmd = fmt.Sprintf("docker exec %s pg_isready -U %s", dbContainerName, security.ShellEscape(dbUser))
-		} else {
-			checkCmd = fmt.Sprintf("docker exec %s mysqladmin ping -u%s -p%s --silent",
-				dbContainerName, security.ShellEscape(dbUser), security.ShellEscape(dbPassword))
-		}
-		checkResult, _ := client.Exec(ctx, checkCmd)
+		healthCmd := info.BuildHealthCmd(
+			dbContainerName,
+			security.ShellEscape(dbUser),
+			security.ShellEscape(dbPassword),
+		)
+		checkResult, _ := client.Exec(ctx, healthCmd)
 		if checkResult != nil && checkResult.ExitCode == 0 {
 			break
 		}

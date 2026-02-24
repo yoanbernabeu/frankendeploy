@@ -990,6 +990,135 @@ func TestIsContainerizedDriver(t *testing.T) {
 	}
 }
 
+// ─── DBDriverInfo Methods ────────────────────────────────────────────────────
+
+func TestDBDriverInfo_FullImage(t *testing.T) {
+	tests := []struct {
+		name     string
+		driver   string
+		version  string
+		expected string
+	}{
+		{"pgsql with version", "pgsql", "15", "postgres:15-alpine"},
+		{"pgsql default version", "pgsql", "", "postgres:16-alpine"},
+		{"mysql with version", "mysql", "8.1", "mysql:8.1"},
+		{"mysql default version", "mysql", "", "mysql:8.0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info, err := GetDBDriverInfo(tt.driver)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			result := info.FullImage(tt.version)
+			if result != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestDBDriverInfo_BuildDatabaseURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		driver   string
+		expected string
+	}{
+		{
+			"pgsql URL",
+			"pgsql",
+			"postgresql://user:pass@myapp-db:5432/mydb?serverVersion=16&charset=utf8",
+		},
+		{
+			"mysql URL",
+			"mysql",
+			"mysql://user:pass@myapp-db:3306/mydb?serverVersion=8.0&charset=utf8mb4",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info, err := GetDBDriverInfo(tt.driver)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			result := info.BuildDatabaseURL("user", "pass", "myapp-db", "mydb", "")
+			if result != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestDBDriverInfo_BuildEnvArgs(t *testing.T) {
+	tests := []struct {
+		name     string
+		driver   string
+		contains []string
+	}{
+		{
+			"pgsql env args",
+			"pgsql",
+			[]string{"POSTGRES_USER=testuser", "POSTGRES_PASSWORD=secret", "POSTGRES_DB=testdb"},
+		},
+		{
+			"mysql env args",
+			"mysql",
+			[]string{"MYSQL_ROOT_PASSWORD=secret", "MYSQL_USER=testuser", "MYSQL_PASSWORD=secret", "MYSQL_DATABASE=testdb"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info, err := GetDBDriverInfo(tt.driver)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			result := info.BuildEnvArgs("testuser", "secret", "testdb")
+			for _, c := range tt.contains {
+				if !strings.Contains(result, c) {
+					t.Errorf("expected env args to contain %q, got %q", c, result)
+				}
+			}
+		})
+	}
+}
+
+func TestDBDriverInfo_BuildHealthCmd(t *testing.T) {
+	tests := []struct {
+		name     string
+		driver   string
+		contains []string
+	}{
+		{
+			"pgsql health cmd",
+			"pgsql",
+			[]string{"docker exec", "mydb", "pg_isready", "-U testuser"},
+		},
+		{
+			"mysql health cmd",
+			"mysql",
+			[]string{"docker exec", "mydb", "mysqladmin ping", "-utestuser", "-psecret"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info, err := GetDBDriverInfo(tt.driver)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			result := info.BuildHealthCmd("mydb", "testuser", "secret")
+			for _, c := range tt.contains {
+				if !strings.Contains(result, c) {
+					t.Errorf("expected health cmd to contain %q, got %q", c, result)
+				}
+			}
+		})
+	}
+}
+
 // ─── buildDatabaseURL ────────────────────────────────────────────────────────
 
 func TestComposeGenerator_BuildDatabaseURL(t *testing.T) {
