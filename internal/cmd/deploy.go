@@ -70,28 +70,20 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no server specified. Usage: frankendeploy deploy <server> or set FRANKENDEPLOY_SERVER")
 	}
 
-	// Validate server name
-	if err := security.ValidateServerName(serverName); err != nil {
-		return fmt.Errorf("invalid server name: %w", err)
-	}
-
-	// Load project config
-	projectCfg, err := config.LoadProjectConfig(GetConfigFile())
+	// Step 1: Connect to server (validates name, loads config, applies SSHTimeout)
+	conn, err := ConnectToServer(serverName)
 	if err != nil {
 		return err
 	}
+	defer conn.Client.Close()
 
-	// Load global config
-	globalCfg, err := config.LoadGlobalConfig()
-	if err != nil {
-		return err
-	}
+	client := conn.Client
+	projectCfg := conn.Project
+	serverCfg := conn.Server
+	globalCfg := conn.Global
 
-	// Get server config
-	serverCfg, err := globalCfg.GetServer(serverName)
-	if err != nil {
-		return err
-	}
+	PrintInfo("Deploying %s to %s...", projectCfg.Name, serverName)
+	PrintSuccess("Connected to %s", serverCfg.Host)
 
 	// Generate tag if not provided
 	if deployTag == "" {
@@ -105,17 +97,6 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 	imageName := fmt.Sprintf("%s:%s", projectCfg.Name, deployTag)
 	remoteAppPath := constants.AppBasePath(projectCfg.Name)
-
-	PrintInfo("Deploying %s to %s...", projectCfg.Name, serverName)
-
-	// Step 1: Connect to server
-	PrintInfo("Connecting to %s...", serverCfg.Host)
-	client := ssh.NewClient(serverCfg.Host, serverCfg.User, serverCfg.Port, serverCfg.KeyPath)
-	if err := client.Connect(); err != nil {
-		return fmt.Errorf("failed to connect: %w", err)
-	}
-	defer client.Close()
-	PrintSuccess("Connected")
 
 	// Step 1a: Check architecture compatibility
 	useRemoteBuild, err := checkArchitectureMismatch(ctx, client, serverCfg, globalCfg, serverName)
