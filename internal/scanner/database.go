@@ -51,7 +51,7 @@ func (s *Scanner) DetectDatabase() (*config.DatabaseConfig, string, error) {
 	// First, check doctrine.yaml for explicit driver
 	if doctrineConfig, err := s.GetDoctrineConfig(); err == nil {
 		if driver := doctrineConfig.Doctrine.DBAL.Driver; driver != "" {
-			dbConfig.Driver = normalizeDriver(driver)
+			dbConfig.Driver = config.NormalizeDBDriver(driver)
 			dbConfig.Version = getDefaultVersion(dbConfig.Driver)
 			// SQLite doesn't support managed mode (file-based database)
 			if dbConfig.Driver != "sqlite" {
@@ -137,20 +137,6 @@ func parseDBURL(url string) (string, string) {
 	}
 
 	return driver, version
-}
-
-// normalizeDriver normalizes the database driver name
-func normalizeDriver(driver string) string {
-	switch strings.ToLower(driver) {
-	case "pdo_pgsql", "postgresql", "postgres", "pgsql":
-		return "pgsql"
-	case "pdo_mysql", "mysql", "mysqli":
-		return "mysql"
-	case "pdo_sqlite", "sqlite", "sqlite3":
-		return "sqlite"
-	default:
-		return driver
-	}
 }
 
 // getDefaultVersion returns the default version for a database driver

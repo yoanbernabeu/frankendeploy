@@ -217,30 +217,5 @@ func TestDetectDatabase_NoWarningExplicit(t *testing.T) {
 	}
 }
 
-func TestNormalizeDriver(t *testing.T) {
-	tests := []struct {
-		driver   string
-		expected string
-	}{
-		{"pdo_pgsql", "pgsql"},
-		{"postgresql", "pgsql"},
-		{"postgres", "pgsql"},
-		{"pgsql", "pgsql"},
-		{"pdo_mysql", "mysql"},
-		{"mysql", "mysql"},
-		{"mysqli", "mysql"},
-		{"pdo_sqlite", "sqlite"},
-		{"sqlite", "sqlite"},
-		{"sqlite3", "sqlite"},
-		{"unknown", "unknown"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.driver, func(t *testing.T) {
-			result := normalizeDriver(tt.driver)
-			if result != tt.expected {
-				t.Errorf("normalizeDriver(%q) = %q, want %q", tt.driver, result, tt.expected)
-			}
-		})
-	}
-}
+// Driver normalization is now tested exclusively in internal/config/project_test.go
+// (TestNormalizeDBDriver). The scanner delegates to config.NormalizeDBDriver.

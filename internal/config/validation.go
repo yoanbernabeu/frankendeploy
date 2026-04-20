@@ -184,14 +184,19 @@ func isValidProjectName(name string) bool {
 	return matched
 }
 
+// phpVersionRegex matches PHP versions of the form "8.x" where x ≥ 1.
+// Kept forward-compatible so new PHP releases (8.10, 8.20, …) don't require
+// a config/validator update before they can be used.
+var phpVersionRegex = regexp.MustCompile(`^8\.[1-9]\d*$`)
+
+// IsValidPHPVersion reports whether the given version is an accepted PHP version.
+// This is the single source of truth used by both the config and generator layers.
+func IsValidPHPVersion(version string) bool {
+	return phpVersionRegex.MatchString(version)
+}
+
 func isValidPHPVersion(version string) bool {
-	validVersions := []string{"8.1", "8.2", "8.3", "8.4"}
-	for _, v := range validVersions {
-		if version == v {
-			return true
-		}
-	}
-	return false
+	return IsValidPHPVersion(version)
 }
 
 func isValidDatabaseDriver(driver string) bool {

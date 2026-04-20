@@ -5,11 +5,11 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/yoanbernabeu/frankendeploy/internal/config"
 	"github.com/yoanbernabeu/frankendeploy/internal/security"
 )
 
 var (
-	phpVersionRegex      = regexp.MustCompile(`^8\.[1-9]\d*$`)
 	phpExtensionRegex    = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 	extraPackageRegex    = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._+-]*$`)
 	frankenPHPVersionRgx = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
@@ -28,7 +28,7 @@ var shellInjectionPatterns = []string{"$(", "`", ";", "&&", "||", "|", ">", "<",
 
 // ValidateDockerfileData validates inputs before Dockerfile generation.
 func ValidateDockerfileData(data DockerfileData) error {
-	if !phpVersionRegex.MatchString(data.PHP.Version) {
+	if !config.IsValidPHPVersion(data.PHP.Version) {
 		return fmt.Errorf("invalid PHP version %q: must be 8.x (e.g., 8.1, 8.2, 8.3, 8.4)", data.PHP.Version)
 	}
 

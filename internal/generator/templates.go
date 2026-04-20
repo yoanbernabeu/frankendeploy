@@ -75,24 +75,6 @@ func (l *TemplateLoader) Execute(name string, data interface{}) (string, error) 
 // templateFuncs returns custom template functions
 func templateFuncs() template.FuncMap {
 	return template.FuncMap{
-		"join": func(sep string, items []string) string {
-			result := ""
-			for i, item := range items {
-				if i > 0 {
-					result += sep
-				}
-				result += item
-			}
-			return result
-		},
-		"contains": func(slice []string, item string) bool {
-			for _, s := range slice {
-				if s == item {
-					return true
-				}
-			}
-			return false
-		},
 		"default": func(def, val interface{}) interface{} {
 			if val == nil || val == "" {
 				return def

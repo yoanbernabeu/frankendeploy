@@ -214,6 +214,8 @@ func TestNormalizeDBDriver(t *testing.T) {
 		{"pgsql", "pgsql"},
 		{"mysql", "mysql"},
 		{"sqlite", "sqlite"},
+		{"PGSQL", "pgsql"},
+		{"MySQL", "mysql"},
 		{"unknown", "unknown"},
 	}
 

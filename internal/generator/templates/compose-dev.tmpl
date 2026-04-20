@@ -39,13 +39,8 @@ services:
       start_period: 30s
 {{- if or (eq .Database.Driver "pgsql") (eq .Database.Driver "mysql") }}
     depends_on:
-{{- if eq .Database.Driver "pgsql" }}
       database:
         condition: service_healthy
-{{- else if eq .Database.Driver "mysql" }}
-      database:
-        condition: service_healthy
-{{- end }}
 {{- end }}
 
 {{- if eq .Database.Driver "pgsql" }}
