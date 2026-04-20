@@ -284,6 +284,31 @@ func TestBuildEnvContent(t *testing.T) {
 	}
 }
 
+// TestBuildEnvContent_DeterministicOrdering guards the fix for non-deterministic
+// ordering that produced noisy diffs on every env file rewrite.
+func TestBuildEnvContent_DeterministicOrdering(t *testing.T) {
+	vars := map[string]string{
+		"ZEBRA":       "z",
+		"APP_ENV":     "prod",
+		"DATABASE_URL": "postgres://u:p@h/db",
+		"APP_SECRET":  "abc",
+	}
+
+	// Calling buildEnvContent repeatedly must produce the exact same bytes.
+	first := buildEnvContent(vars)
+	for i := 0; i < 20; i++ {
+		if got := buildEnvContent(vars); got != first {
+			t.Fatalf("buildEnvContent() is non-deterministic:\nfirst=%q\ngot  =%q", first, got)
+		}
+	}
+
+	// Keys must appear in alphabetical order.
+	want := "APP_ENV=prod\nAPP_SECRET=abc\nDATABASE_URL=postgres://u:p@h/db\nZEBRA=z\n"
+	if first != want {
+		t.Errorf("buildEnvContent() = %q, want %q", first, want)
+	}
+}
+
 // Helper function for bool pointers
 func boolPtr(b bool) *bool {
 	return &b

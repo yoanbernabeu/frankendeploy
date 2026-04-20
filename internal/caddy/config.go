@@ -24,17 +24,12 @@ type AppConfig struct {
 	Name   string
 	Domain string
 	Port   int
-	TLS    bool
 }
 
 // GenerateAppConfig generates Caddy config for an application
 func (g *ConfigGenerator) GenerateAppConfig(app AppConfig) (string, error) {
 	tmpl := `# {{ .Name }}
 {{ .Domain }} {
-{{- if not .TLS }}
-    tls internal
-{{- end }}
-
     reverse_proxy {{ .Name }}:{{ .Port }} {
         health_uri /
         health_interval 30s
@@ -105,7 +100,6 @@ func AppConfigFromProject(cfg *config.ProjectConfig, domain string) AppConfig {
 		Name:   cfg.Name,
 		Domain: domain,
 		Port:   port,
-		TLS:    true,
 	}
 }
 
@@ -115,14 +109,6 @@ func ReloadCommands() []string {
 	return []string{
 		// Reload Caddy config inside container via Admin API (zero downtime)
 		`docker exec caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile && echo "Caddy config reloaded"`,
-	}
-}
-
-// ReloadCommandsFallback returns fallback reload command if graceful reload fails
-func ReloadCommandsFallback() []string {
-	return []string{
-		// Restart container (brief downtime, last resort)
-		`docker restart caddy`,
 	}
 }
 

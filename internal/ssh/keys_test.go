@@ -1,6 +1,8 @@
 package ssh
 
 import (
+	"bytes"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"testing"
@@ -98,6 +100,42 @@ L2VqAHZG6v4r7hYWQCK1H4D8pL8f5F0c3H4B7vH8L7sFQE7dH1pQ2s8GlJ1DsB0W
 			})
 		}
 	})
+}
+
+// TestDetectKeyType_OpenSSHFormat verifies that for keys stored in the modern
+// OpenSSH format ("-----BEGIN OPENSSH PRIVATE KEY-----"), the algorithm is
+// identified from the decoded binary blob rather than defaulted to ed25519.
+// Guards against the prior bug where an RSA key in OpenSSH format would be
+// misclassified as ed25519.
+func TestDetectKeyType_OpenSSHFormat(t *testing.T) {
+	tests := []struct {
+		name   string
+		marker string
+		want   string
+	}{
+		{"RSA in OpenSSH format", "ssh-rsa", "rsa"},
+		{"ed25519 in OpenSSH format", "ssh-ed25519", "ed25519"},
+		{"ECDSA in OpenSSH format", "ecdsa-sha2-nistp256", "ecdsa"},
+		{"DSA in OpenSSH format", "ssh-dss", "dsa"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Craft a minimal OpenSSH-format PEM whose decoded blob contains the
+			// algorithm marker. The blob does not need to be a valid OpenSSH key —
+			// detectKeyType only scans the decoded bytes for the marker string.
+			body := append([]byte("openssh-key-v1\x00"), []byte(tt.marker)...)
+			block := &pem.Block{Type: "OPENSSH PRIVATE KEY", Bytes: body}
+			var buf bytes.Buffer
+			if err := pem.Encode(&buf, block); err != nil {
+				t.Fatalf("pem.Encode: %v", err)
+			}
+
+			if got := detectKeyType(buf.Bytes()); got != tt.want {
+				t.Errorf("detectKeyType(%s) = %q, want %q", tt.marker, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestValidateSSHKey(t *testing.T) {
