@@ -125,17 +125,19 @@ func (s *Scanner) enhanceExtensions(extensions []string, result *config.ScanResu
 		}
 	}
 
-	// Add database-specific extension
+	// Add database-specific extension. DetectDatabase already canonicalizes
+	// the driver via config.NormalizeDBDriver, so only the canonical forms
+	// (pgsql/mysql/sqlite) need handling here.
 	switch result.Database.Driver {
-	case "pgsql", "pdo_pgsql":
+	case "pgsql":
 		if !extMap["pdo_pgsql"] {
 			extensions = append(extensions, "pdo_pgsql")
 		}
-	case "mysql", "pdo_mysql":
+	case "mysql":
 		if !extMap["pdo_mysql"] {
 			extensions = append(extensions, "pdo_mysql")
 		}
-	case "sqlite", "pdo_sqlite":
+	case "sqlite":
 		if !extMap["pdo_sqlite"] {
 			extensions = append(extensions, "pdo_sqlite")
 		}

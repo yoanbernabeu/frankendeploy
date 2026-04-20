@@ -121,13 +121,15 @@ func FindProjectConfig() (string, error) {
 
 // NormalizeDBDriver normalizes database driver names to their canonical form.
 // For example, "pdo_pgsql" → "pgsql", "pdo_mysql" → "mysql", "pdo_sqlite" → "sqlite".
+// Known aliases (including already-canonical forms like "pgsql") are canonicalized
+// to lowercase; unknown driver names are returned unchanged.
 func NormalizeDBDriver(driver string) string {
 	switch strings.ToLower(driver) {
-	case "pdo_pgsql", "postgresql", "postgres":
+	case "pdo_pgsql", "postgresql", "postgres", "pgsql":
 		return "pgsql"
-	case "pdo_mysql", "mysqli":
+	case "pdo_mysql", "mysqli", "mysql":
 		return "mysql"
-	case "pdo_sqlite", "sqlite3":
+	case "pdo_sqlite", "sqlite3", "sqlite":
 		return "sqlite"
 	default:
 		return driver

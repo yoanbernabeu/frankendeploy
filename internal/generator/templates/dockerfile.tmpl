@@ -31,12 +31,14 @@ WORKDIR /app
 
 VOLUME /app/var/
 
-# Install system dependencies
+# Install system dependencies (netcat-openbsd is used by docker-entrypoint for
+# the database wait loop)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     acl \
     file \
     gettext \
     git \
+    netcat-openbsd \
 {{- if .Dockerfile.ExtraPackages }}
 {{- range .Dockerfile.ExtraPackages }}
     {{ . }} \
@@ -70,9 +72,6 @@ RUN groupadd --gid ${GID} app && \
 
 # Allow Composer to run as superuser during build only
 ENV COMPOSER_ALLOW_SUPERUSER=1
-
-# Install netcat for database wait
-RUN apt-get update && apt-get install -y --no-install-recommends netcat-openbsd && rm -rf /var/lib/apt/lists/*
 
 {{- if .PHP.IniValues }}
 

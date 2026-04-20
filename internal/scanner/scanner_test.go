@@ -104,6 +104,11 @@ func TestExtractPHPVersion(t *testing.T) {
 		{">=8.1 <8.4", "8.4"},
 		{"^8.5", "8.5"},
 		{">=8.10", "8.10"},
+		// Guards the numeric-comparison fix: lexicographically "8.9" > "8.11"
+		// ('9' > '1' at the same position) and "8.2" > "8.10" ('2' > '1').
+		// The minor version must be compared as a number.
+		{">=8.9 <8.11", "8.11"},
+		{">=8.2 <8.10", "8.10"},
 		{">=7.4", "8.3"}, // No 8.x found, should default
 		{"", "8.3"},
 	}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -77,9 +78,10 @@ func (s *Scanner) ParseComposer() (*ComposerResult, error) {
 	return result, nil
 }
 
-// extractPHPVersion extracts a clean PHP version from composer constraint
+// extractPHPVersion extracts a clean PHP version from composer constraint.
+// Compares matches numerically so "8.10" is recognised as higher than "8.9"
+// (string comparison would incorrectly rank "8.9" above "8.10").
 func extractPHPVersion(constraint string) string {
-	// Common patterns: ">=8.1", "^8.2", "~8.3", "8.2.*", ">=8.1 <8.4"
 	re := regexp.MustCompile(`8\.\d+`)
 	matches := re.FindAllString(constraint, -1)
 
@@ -87,15 +89,30 @@ func extractPHPVersion(constraint string) string {
 		return "8.3" // Default to latest stable
 	}
 
-	// Return the highest version found
 	highest := matches[0]
-	for _, m := range matches {
-		if m > highest {
+	highestMinor := phpMinor(highest)
+	for _, m := range matches[1:] {
+		if phpMinor(m) > highestMinor {
 			highest = m
+			highestMinor = phpMinor(m)
 		}
 	}
 
 	return highest
+}
+
+// phpMinor returns the minor-version component of a "8.x" string, or -1 if
+// the string does not follow that format.
+func phpMinor(v string) int {
+	parts := strings.SplitN(v, ".", 2)
+	if len(parts) != 2 {
+		return -1
+	}
+	n, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return -1
+	}
+	return n
 }
 
 // GetPackageVersion returns the version constraint for a package
