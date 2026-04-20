@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
@@ -235,10 +236,18 @@ func parseEnvContent(content string) map[string]string {
 	return vars
 }
 
-// buildEnvContent builds .env file content from a map
+// buildEnvContent builds .env file content from a map.
+// Keys are sorted alphabetically so repeated writes produce stable diffs.
 func buildEnvContent(vars map[string]string) string {
-	var lines []string
-	for key, value := range vars {
+	keys := make([]string, 0, len(vars))
+	for k := range vars {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	lines := make([]string, 0, len(keys))
+	for _, key := range keys {
+		value := vars[key]
 		// Quote values with spaces or special characters
 		if strings.ContainsAny(value, " \t\n\"'") {
 			value = fmt.Sprintf("\"%s\"", value)

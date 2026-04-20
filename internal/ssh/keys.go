@@ -1,6 +1,8 @@
 package ssh
 
 import (
+	"bytes"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -126,28 +128,36 @@ func isPassphraseError(err error) bool {
 		strings.Contains(errStr, "ENCRYPTED")
 }
 
-// detectKeyType attempts to detect the key type from the key data
+// detectKeyType attempts to detect the key type from the key data.
+// For legacy PEM types the header is authoritative. For modern OpenSSH keys,
+// the PEM header is always "OPENSSH PRIVATE KEY" regardless of the underlying
+// algorithm, so we PEM-decode and inspect the binary blob for the key-type
+// marker (e.g. "ssh-ed25519", "ssh-rsa", "ecdsa-sha2-*", "ssh-dss").
 func detectKeyType(data []byte) string {
 	content := string(data)
 
-	if strings.Contains(content, "OPENSSH PRIVATE KEY") {
-		// Modern OpenSSH format - need to look for type hints
-		if strings.Contains(content, "ed25519") ||
-			strings.Contains(strings.ToLower(content), "ed25519") {
-			return "ed25519"
-		}
-		// For OpenSSH format, we default to ed25519 if no type hint is found
-		// as it's the modern default
-		return "ed25519"
-	}
-	if strings.Contains(content, "RSA PRIVATE KEY") {
+	switch {
+	case strings.Contains(content, "-----BEGIN RSA PRIVATE KEY-----"):
 		return "rsa"
-	}
-	if strings.Contains(content, "EC PRIVATE KEY") {
+	case strings.Contains(content, "-----BEGIN EC PRIVATE KEY-----"):
 		return "ecdsa"
-	}
-	if strings.Contains(content, "DSA PRIVATE KEY") {
+	case strings.Contains(content, "-----BEGIN DSA PRIVATE KEY-----"):
 		return "dsa"
+	case strings.Contains(content, "-----BEGIN OPENSSH PRIVATE KEY-----"):
+		if block, _ := pem.Decode(data); block != nil {
+			switch {
+			case bytes.Contains(block.Bytes, []byte("ssh-ed25519")),
+				bytes.Contains(block.Bytes, []byte("sk-ssh-ed25519")):
+				return "ed25519"
+			case bytes.Contains(block.Bytes, []byte("ssh-rsa")):
+				return "rsa"
+			case bytes.Contains(block.Bytes, []byte("ecdsa-sha2")),
+				bytes.Contains(block.Bytes, []byte("sk-ecdsa-sha2")):
+				return "ecdsa"
+			case bytes.Contains(block.Bytes, []byte("ssh-dss")):
+				return "dsa"
+			}
+		}
 	}
 
 	return "unknown"
