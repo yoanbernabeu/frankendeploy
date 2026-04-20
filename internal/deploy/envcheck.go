@@ -91,7 +91,7 @@ func needsDatabaseURL(cfg *config.ProjectConfig) bool {
 	}
 
 	// Managed mode: FrankenDeploy provides DATABASE_URL
-	if cfg.Database.Managed != nil && *cfg.Database.Managed {
+	if cfg.Database.IsManaged() {
 		return false
 	}
 

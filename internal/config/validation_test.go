@@ -276,7 +276,7 @@ func TestValidateProjectConfig(t *testing.T) {
 			wantErrors: true,
 		},
 		{
-			name: "messenger enabled with zero workers",
+			name: "messenger enabled is valid",
 			config: &ProjectConfig{
 				Name: "my-app",
 				PHP: PHPConfig{
@@ -284,35 +284,6 @@ func TestValidateProjectConfig(t *testing.T) {
 				},
 				Messenger: MessengerConfig{
 					Enabled: true,
-					Workers: 0,
-				},
-			},
-			wantErrors: true,
-		},
-		{
-			name: "messenger enabled with valid workers",
-			config: &ProjectConfig{
-				Name: "my-app",
-				PHP: PHPConfig{
-					Version: "8.3",
-				},
-				Messenger: MessengerConfig{
-					Enabled: true,
-					Workers: 2,
-				},
-			},
-			wantErrors: false,
-		},
-		{
-			name: "messenger disabled with zero workers is valid",
-			config: &ProjectConfig{
-				Name: "my-app",
-				PHP: PHPConfig{
-					Version: "8.3",
-				},
-				Messenger: MessengerConfig{
-					Enabled: false,
-					Workers: 0,
 				},
 			},
 			wantErrors: false,

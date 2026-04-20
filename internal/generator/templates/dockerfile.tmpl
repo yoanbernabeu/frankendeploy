@@ -152,7 +152,7 @@ RUN set -eux; \
     php bin/console asset-map:compile --no-interaction
 {{- else }}
 # Webpack/Vite: copy pre-built assets from node_build stage
-COPY --from=node_build /app/public/build public/build
+COPY --from=node_build /app/{{ .Assets.OutputDir }} {{ .Assets.OutputDir }}
 {{- end }}
 {{- end }}
 

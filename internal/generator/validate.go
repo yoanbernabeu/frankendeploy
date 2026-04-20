@@ -14,6 +14,9 @@ var (
 	extraPackageRegex    = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._+-]*$`)
 	frankenPHPVersionRgx = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 	dbVersionTagRegex    = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
+	// assetOutputDirRegex: relative path, no traversal, safe chars only.
+	// Flows into a Dockerfile COPY line so must be sanitized.
+	assetOutputDirRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/-]*$`)
 )
 
 // dockerfileInstructions are the valid Dockerfile instruction keywords
@@ -41,6 +44,15 @@ func ValidateDockerfileData(data DockerfileData) error {
 	if data.Assets != nil && data.Assets.BuildCommand != "" {
 		if err := security.ValidateDockerCommand(data.Assets.BuildCommand); err != nil {
 			return fmt.Errorf("invalid build command: %w", err)
+		}
+	}
+
+	if data.Assets != nil && data.Assets.OutputDir != "" {
+		if strings.Contains(data.Assets.OutputDir, "..") {
+			return fmt.Errorf("invalid asset output_dir %q: must not contain path traversal", data.Assets.OutputDir)
+		}
+		if !assetOutputDirRegex.MatchString(data.Assets.OutputDir) {
+			return fmt.Errorf("invalid asset output_dir %q: only alphanumeric, dots, underscores, slashes, and hyphens allowed (no leading slash)", data.Assets.OutputDir)
 		}
 	}
 

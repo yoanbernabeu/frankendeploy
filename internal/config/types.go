@@ -36,6 +36,11 @@ type DatabaseConfig struct {
 	Managed *bool `yaml:"managed,omitempty"`
 }
 
+// IsManaged reports whether this database config requests a managed DB container.
+func (d *DatabaseConfig) IsManaged() bool {
+	return d.Managed != nil && *d.Managed
+}
+
 // AssetsConfig holds asset build configuration
 type AssetsConfig struct {
 	BuildTool    string `yaml:"build_tool,omitempty"`
@@ -43,10 +48,12 @@ type AssetsConfig struct {
 	OutputDir    string `yaml:"output_dir,omitempty"`
 }
 
-// MessengerConfig holds Symfony Messenger worker configuration
+// MessengerConfig holds Symfony Messenger worker configuration.
+// Note: a single worker container is started per application; scaling to
+// multiple workers is not supported today. The transports slice is passed
+// directly to `messenger:consume`.
 type MessengerConfig struct {
 	Enabled    bool     `yaml:"enabled,omitempty"`
-	Workers    int      `yaml:"workers,omitempty"`
 	Transports []string `yaml:"transports,omitempty"`
 }
 

@@ -149,7 +149,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 	// Step 3b: Deploy managed database if configured
 	var databaseURL string
-	if projectCfg.Database.Driver != "" && projectCfg.Database.Managed != nil && *projectCfg.Database.Managed {
+	if projectCfg.Database.Driver != "" && projectCfg.Database.IsManaged() {
 		PrintInfo("Setting up managed database...")
 		var err error
 		databaseURL, err = deployManagedDatabase(ctx, client, projectCfg, remoteAppPath)
@@ -219,13 +219,13 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("swap failed: %w", err)
 	}
 
-	// Step 8b: Deploy Messenger workers if enabled
+	// Step 8b: Deploy Messenger worker if enabled
 	if projectCfg.Messenger.Enabled {
-		PrintInfo("Starting Messenger workers...")
+		PrintInfo("Starting Messenger worker...")
 		if err := deployMessengerWorkers(ctx, client, projectCfg, imageName, remoteAppPath, databaseURL); err != nil {
-			PrintWarning("Failed to start Messenger workers: %v", err)
+			PrintWarning("Failed to start Messenger worker: %v", err)
 		} else {
-			PrintSuccess("Messenger workers started (%d workers)", projectCfg.Messenger.Workers)
+			PrintSuccess("Messenger worker started")
 		}
 	}
 
@@ -674,13 +674,11 @@ func runDeployHooks(ctx context.Context, client ssh.Executor, containerName stri
 	return nil
 }
 
-// deployMessengerWorkers starts Messenger worker containers
+// deployMessengerWorkers starts a Messenger worker container for the app.
+// Only a single worker container is started; multi-worker scaling is not
+// currently supported.
 func deployMessengerWorkers(ctx context.Context, client ssh.Executor, cfg *config.ProjectConfig, imageName, appPath, databaseURL string) error {
 	workerName := fmt.Sprintf("%s-worker", cfg.Name)
-	workers := cfg.Messenger.Workers
-	if workers <= 0 {
-		workers = 2
-	}
 
 	// Build transports argument
 	transports := cfg.Messenger.Transports
@@ -724,12 +722,6 @@ func deployMessengerWorkers(ctx context.Context, client ssh.Executor, cfg *confi
 	}
 	if err := result.Err(); err != nil {
 		return fmt.Errorf("failed to start worker: %w", err)
-	}
-
-	// If more than 1 worker requested, use docker exec to spawn additional workers
-	// Note: For true scaling, consider using docker-compose or swarm
-	if workers > 1 {
-		PrintVerbose("Note: Running %d workers via single container (use docker-compose for true scaling)", workers)
 	}
 
 	return nil

@@ -42,6 +42,50 @@ services:
 {{- end }}
     networks:
       - {{ networkName }}
+{{- if .ManagedDatabase }}
+    depends_on:
+      database:
+        condition: service_healthy
+
+  database:
+{{- if eq .Database.Driver "pgsql" }}
+    image: postgres:{{ .Database.Version }}-alpine
+    environment:
+      POSTGRES_USER: ${DATABASE_USER:-{{ .Name }}}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD is required}
+      POSTGRES_DB: ${DATABASE_NAME:-{{ .Name }}}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-{{ .Name }}} -d ${DATABASE_NAME:-{{ .Name }}}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+{{- else if eq .Database.Driver "mysql" }}
+    image: mysql:{{ .Database.Version }}
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD is required}
+      MYSQL_USER: ${DATABASE_USER:-{{ .Name }}}
+      MYSQL_PASSWORD: ${DATABASE_PASSWORD}
+      MYSQL_DATABASE: ${DATABASE_NAME:-{{ .Name }}}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+{{- end }}
+    restart: unless-stopped
+    networks:
+      - {{ networkName }}
+{{- end }}
+
+{{- if .ManagedDatabase }}
+
+volumes:
+  db_data:
+{{- end }}
 
 networks:
   {{ networkName }}:

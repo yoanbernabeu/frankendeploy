@@ -182,7 +182,6 @@ func (s *Scanner) ToProjectConfig(result *config.ScanResult, name string) *confi
 	if result.HasMessenger {
 		cfg.Messenger = config.MessengerConfig{
 			Enabled:    true,
-			Workers:    2,
 			Transports: []string{"async"},
 		}
 	}

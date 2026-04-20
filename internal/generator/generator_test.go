@@ -439,6 +439,60 @@ func TestDockerfileGenerator_Generate_NPMVite(t *testing.T) {
 	}
 }
 
+// TestDockerfileGenerator_Generate_CustomAssetOutputDir verifies that a
+// user-provided Assets.OutputDir (e.g. "public/dist" for Vite with a custom
+// build.outDir) flows into the generated COPY line, instead of being ignored
+// with a hardcoded "public/build".
+func TestDockerfileGenerator_Generate_CustomAssetOutputDir(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Name: "test-app",
+		PHP:  config.PHPConfig{Version: "8.3"},
+		Assets: config.AssetsConfig{
+			BuildTool:    "npm",
+			BuildCommand: "npm run build",
+			OutputDir:    "public/dist",
+		},
+	}
+	dockerfile, err := NewDockerfileGenerator(cfg).Generate()
+	if err != nil {
+		t.Fatalf("failed to generate: %v", err)
+	}
+	want := "COPY --from=node_build /app/public/dist public/dist"
+	if !strings.Contains(dockerfile, want) {
+		t.Errorf("dockerfile should contain %q:\n%s", want, dockerfile)
+	}
+	if strings.Contains(dockerfile, "/app/public/build public/build") {
+		t.Errorf("dockerfile should not contain the hardcoded public/build path:\n%s", dockerfile)
+	}
+}
+
+// TestDockerfileGenerator_Generate_RejectsUnsafeOutputDir guards the
+// sanitization of Assets.OutputDir — it flows into a Dockerfile COPY line.
+func TestDockerfileGenerator_Generate_RejectsUnsafeOutputDir(t *testing.T) {
+	for _, bad := range []string{
+		"../etc",
+		"public/../../etc",
+		"/absolute/path",
+		"public build", // space
+		`"; RUN rm -rf /; #`,
+	} {
+		t.Run(bad, func(t *testing.T) {
+			cfg := &config.ProjectConfig{
+				Name: "test-app",
+				PHP:  config.PHPConfig{Version: "8.3"},
+				Assets: config.AssetsConfig{
+					BuildTool:    "npm",
+					BuildCommand: "npm run build",
+					OutputDir:    bad,
+				},
+			}
+			if _, err := NewDockerfileGenerator(cfg).Generate(); err == nil {
+				t.Errorf("expected error for unsafe output_dir %q, got nil", bad)
+			}
+		})
+	}
+}
+
 func TestDockerfileGenerator_Generate_ExtraPackages(t *testing.T) {
 	cfg := &config.ProjectConfig{
 		Name: "test-app",
@@ -857,6 +911,64 @@ func TestComposeGenerator_GenerateProd_NoDatabaseComment(t *testing.T) {
 	}
 	if strings.Contains(compose, "DATABASE_URL") {
 		t.Error("compose-prod should not contain DATABASE_URL comment without DB config")
+	}
+}
+
+// TestComposeGenerator_GenerateProd_ManagedDatabase verifies that a managed
+// Postgres driver causes compose-prod to emit a `database:` service, a
+// depends_on reference, and a db_data volume. Guards the wiring of
+// Database.Managed into ComposeData.
+func TestComposeGenerator_GenerateProd_ManagedDatabase(t *testing.T) {
+	managed := true
+	cfg := &config.ProjectConfig{
+		Name: "test-app",
+		PHP:  config.PHPConfig{Version: "8.3"},
+		Database: config.DatabaseConfig{
+			Driver:  "pgsql",
+			Version: "16",
+			Managed: &managed,
+		},
+	}
+	gen := NewComposeGenerator(cfg)
+	compose, err := gen.GenerateProd()
+	if err != nil {
+		t.Fatalf("failed to generate: %v", err)
+	}
+	for _, want := range []string{
+		"  database:",
+		"image: postgres:16-alpine",
+		"depends_on:",
+		"db_data:/var/lib/postgresql/data",
+		"volumes:\n  db_data:",
+	} {
+		if !strings.Contains(compose, want) {
+			t.Errorf("managed compose-prod should contain %q:\n%s", want, compose)
+		}
+	}
+}
+
+// TestComposeGenerator_GenerateProd_UnmanagedDatabase verifies that without
+// Managed: true the prod compose does NOT emit a database service.
+func TestComposeGenerator_GenerateProd_UnmanagedDatabase(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Name: "test-app",
+		PHP:  config.PHPConfig{Version: "8.3"},
+		Database: config.DatabaseConfig{
+			Driver:  "pgsql",
+			Version: "16",
+			// Managed unset → external DB
+		},
+	}
+	gen := NewComposeGenerator(cfg)
+	compose, err := gen.GenerateProd()
+	if err != nil {
+		t.Fatalf("failed to generate: %v", err)
+	}
+	if strings.Contains(compose, "  database:") {
+		t.Errorf("unmanaged compose-prod should NOT emit a database service:\n%s", compose)
+	}
+	if strings.Contains(compose, "db_data:") {
+		t.Errorf("unmanaged compose-prod should NOT declare db_data volume:\n%s", compose)
 	}
 }
 
