@@ -26,7 +26,6 @@ type DockerfileData struct {
 	Name              string
 	PHP               config.PHPConfig
 	Assets            *config.AssetsConfig
-	Deploy            config.DeployConfig
 	Dockerfile        config.DockerfileConfig
 	FrankenPHPVersion string
 }
@@ -36,13 +35,20 @@ func (g *DockerfileGenerator) Generate() (string, error) {
 	data := DockerfileData{
 		Name:              g.config.Name,
 		PHP:               g.config.PHP,
-		Deploy:            g.config.Deploy,
 		Dockerfile:        g.config.Dockerfile,
 		FrankenPHPVersion: g.config.FrankenPHPVersion,
 	}
 
 	if g.config.Assets.BuildTool != "" {
-		data.Assets = &g.config.Assets
+		assets := g.config.Assets
+		// Sensible default so a hand-written frankendeploy.yaml with a
+		// BuildTool but no output_dir still produces a valid Dockerfile.
+		// The scanner populates OutputDir, so this only kicks in for manual
+		// configs.
+		if assets.OutputDir == "" {
+			assets.OutputDir = "public/build"
+		}
+		data.Assets = &assets
 	}
 
 	if err := ValidateDockerfileData(data); err != nil {

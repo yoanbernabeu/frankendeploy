@@ -45,6 +45,9 @@ type ComposeData struct {
 	DevDBUser     string
 	DevDBPassword string
 	DevDBName     string
+	// ManagedDatabase is true when the prod compose should emit a database
+	// service (driver is pgsql/mysql and the project opted into managed mode).
+	ManagedDatabase bool
 }
 
 // GenerateDev generates docker-compose.yaml for development
@@ -97,6 +100,10 @@ func (g *ComposeGenerator) buildComposeData(ctx composeContext) (ComposeData, er
 			}
 			data.DatabaseURL = dbURL
 		}
+	}
+
+	if ctx == composeContextProd && g.config.Database.IsManaged() && IsContainerizedDriver(g.config.Database.Driver) {
+		data.ManagedDatabase = true
 	}
 
 	return data, nil

@@ -81,13 +81,11 @@ func ValidateProjectConfig(config *ProjectConfig) ValidationErrors {
 		}
 
 		// SQLite cannot use managed mode (file-based database, not a container)
-		if isSQLiteDriver(config.Database.Driver) {
-			if config.Database.Managed != nil && *config.Database.Managed {
-				errors = append(errors, ValidationError{
-					Field:   "database.managed",
-					Message: "SQLite does not support managed mode. SQLite is a file-based database and cannot run as a container. Remove 'managed: true' from your configuration. The SQLite database directory should be in 'deploy.shared_dirs' for persistence",
-				})
-			}
+		if isSQLiteDriver(config.Database.Driver) && config.Database.IsManaged() {
+			errors = append(errors, ValidationError{
+				Field:   "database.managed",
+				Message: "SQLite does not support managed mode. SQLite is a file-based database and cannot run as a container. Remove 'managed: true' from your configuration. The SQLite database directory should be in 'deploy.shared_dirs' for persistence",
+			})
 		}
 	}
 
@@ -114,13 +112,6 @@ func ValidateProjectConfig(config *ProjectConfig) ValidationErrors {
 				Message: err.Error(),
 			})
 		}
-	}
-
-	if config.Messenger.Enabled && config.Messenger.Workers < 1 {
-		errors = append(errors, ValidationError{
-			Field:   "messenger.workers",
-			Message: "workers must be greater than 0 when messenger is enabled",
-		})
 	}
 
 	if config.Deploy.KeepReleases < 0 {
