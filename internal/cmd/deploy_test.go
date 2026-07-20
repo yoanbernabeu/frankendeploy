@@ -176,7 +176,22 @@ func TestStartNewContainer_BuildsDockerRunCommand(t *testing.T) {
 	}
 }
 
-func TestSwapContainers_HappyPath(t *testing.T) {
+// indexOfCommand returns the index of the first recorded command containing
+// substr, or -1 if none matches.
+func indexOfCommand(cmds []string, substr string) int {
+	for i, c := range cmds {
+		if strings.Contains(c, substr) {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestSwapContainers_RenameBasedOrder(t *testing.T) {
+	// Guards the zero-downtime swap (#42): the old container must be renamed
+	// away (still running, still serving in-flight requests) and the new one
+	// renamed into place BEFORE the old one is stopped. The old stop→rm→rename
+	// order left a multi-second window with no container behind the app name.
 	mock := &ssh.MockExecutor{}
 
 	err := swapContainers(
@@ -185,19 +200,106 @@ func TestSwapContainers_HappyPath(t *testing.T) {
 		"/opt/frankendeploy/apps/myapp",
 		"t1",
 		"myapp-new",
+		true, // old container exists
 	)
 	if err != nil {
 		t.Fatalf("swapContainers() unexpected error: %v", err)
 	}
 
-	wantOrdered := []string{
-		"docker rename myapp-new myapp",
-		"ln -sfn /opt/frankendeploy/apps/myapp/releases/t1 /opt/frankendeploy/apps/myapp/current",
+	renameOld := indexOfCommand(mock.Commands, "docker rename myapp myapp-old")
+	renameNew := indexOfCommand(mock.Commands, "docker rename myapp-new myapp")
+	stopOld := indexOfCommand(mock.Commands, "docker stop myapp-old")
+	symlink := indexOfCommand(mock.Commands, "ln -sfn /opt/frankendeploy/apps/myapp/releases/t1 /opt/frankendeploy/apps/myapp/current")
+
+	if renameOld == -1 || renameNew == -1 || stopOld == -1 || symlink == -1 {
+		t.Fatalf("missing expected commands\nrecorded: %v", mock.Commands)
 	}
-	for _, want := range wantOrdered {
-		if !hasCommand(mock.Commands, want) {
-			t.Errorf("swapContainers() missing command %q\nrecorded: %v", want, mock.Commands)
-		}
+	if !(renameOld < renameNew && renameNew < stopOld) {
+		t.Errorf("wrong order: rename old (%d) must precede rename new (%d), which must precede stop old (%d)\nrecorded: %v",
+			renameOld, renameNew, stopOld, mock.Commands)
+	}
+}
+
+func TestSwapContainers_FirstDeployNoOldContainer(t *testing.T) {
+	mock := &ssh.MockExecutor{}
+
+	err := swapContainers(
+		context.Background(), mock,
+		"myapp",
+		"/opt/frankendeploy/apps/myapp",
+		"t1",
+		"myapp-new",
+		false, // first deploy: no old container
+	)
+	if err != nil {
+		t.Fatalf("swapContainers() unexpected error: %v", err)
+	}
+
+	if idx := indexOfCommand(mock.Commands, "docker rename myapp myapp-old"); idx != -1 {
+		t.Errorf("must not rename a non-existent old container, got: %v", mock.Commands)
+	}
+	if idx := indexOfCommand(mock.Commands, "docker stop myapp-old"); idx != -1 {
+		t.Errorf("must not stop a non-existent old container, got: %v", mock.Commands)
+	}
+	if idx := indexOfCommand(mock.Commands, "docker rename myapp-new myapp"); idx == -1 {
+		t.Errorf("expected rename of the new container, got: %v", mock.Commands)
+	}
+}
+
+func TestSwapContainers_RestoresOldOnRenameFailure(t *testing.T) {
+	// Guards the recovery path (#42): if renaming the new container into place
+	// fails, the old container must be renamed back so the site keeps being
+	// served, instead of staying down with no container behind the app name.
+	mock := &ssh.MockExecutor{
+		ExecFunc: func(ctx context.Context, command string) (*ssh.ExecResult, error) {
+			if strings.Contains(command, "docker rename myapp-new myapp") {
+				return &ssh.ExecResult{ExitCode: 1, Stderr: "name already in use"}, nil
+			}
+			return &ssh.ExecResult{ExitCode: 0}, nil
+		},
+	}
+
+	err := swapContainers(
+		context.Background(), mock,
+		"myapp",
+		"/opt/frankendeploy/apps/myapp",
+		"t1",
+		"myapp-new",
+		true,
+	)
+	if err == nil {
+		t.Fatal("swapContainers() expected error when rename fails, got nil")
+	}
+	if idx := indexOfCommand(mock.Commands, "docker rename myapp-old myapp"); idx == -1 {
+		t.Errorf("expected restore of the old container after failed swap, got: %v", mock.Commands)
+	}
+}
+
+func TestSwapContainers_AbortsIfOldRenameFails(t *testing.T) {
+	// If the old container cannot be renamed away, the swap must abort before
+	// touching anything: the old container keeps its name and keeps serving.
+	mock := &ssh.MockExecutor{
+		ExecFunc: func(ctx context.Context, command string) (*ssh.ExecResult, error) {
+			if strings.Contains(command, "docker rename myapp myapp-old") {
+				return &ssh.ExecResult{ExitCode: 1, Stderr: "container is restarting"}, nil
+			}
+			return &ssh.ExecResult{ExitCode: 0}, nil
+		},
+	}
+
+	err := swapContainers(
+		context.Background(), mock,
+		"myapp",
+		"/opt/frankendeploy/apps/myapp",
+		"t1",
+		"myapp-new",
+		true,
+	)
+	if err == nil {
+		t.Fatal("swapContainers() expected error when old rename fails, got nil")
+	}
+	if idx := indexOfCommand(mock.Commands, "docker rename myapp-new myapp"); idx != -1 {
+		t.Errorf("must not rename the new container after a failed old rename, got: %v", mock.Commands)
 	}
 }
 
@@ -219,6 +321,7 @@ func TestSwapContainers_SymlinkFailureSurfaces(t *testing.T) {
 		"/opt/frankendeploy/apps/myapp",
 		"t1",
 		"myapp-new",
+		false,
 	)
 	if err == nil {
 		t.Fatal("swapContainers() expected error when symlink update fails, got nil")
