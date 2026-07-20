@@ -170,8 +170,9 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if old container exists (for swap phase)
-	oldResult, _ := client.Exec(ctx, fmt.Sprintf("docker ps -q -f name=^%s$", projectCfg.Name))
-	state.OldContainerExists = strings.TrimSpace(oldResult.Stdout) != ""
+	if oldResult, err := client.Exec(ctx, fmt.Sprintf("docker ps -q -f name=^%s$", projectCfg.Name)); err == nil && oldResult != nil {
+		state.OldContainerExists = strings.TrimSpace(oldResult.Stdout) != ""
+	}
 
 	// Step 5: Start new container with temporary name (old container still running)
 	PrintInfo("Starting new version (blue-green)...")
@@ -212,10 +213,11 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 	PrintSuccess("Health check passed")
 
-	// Step 8: Swap containers (stop old, rename new → final, update symlink)
+	// Step 8: Swap containers (rename old away, rename new → final, stop old, update symlink)
 	PrintInfo("Swapping containers...")
 	state.Phase = deploy.PhaseSwapContainers
-	if err := swapContainers(ctx, client, projectCfg.Name, remoteAppPath, deployTag, state.TempContainerName); err != nil {
+	if err := swapContainers(ctx, client, projectCfg.Name, remoteAppPath, deployTag, state.TempContainerName, state.OldContainerExists); err != nil {
+		rollbackNewContainer(ctx, client, state)
 		return fmt.Errorf("swap failed: %w", err)
 	}
 
@@ -453,21 +455,55 @@ func startNewContainer(ctx context.Context, client ssh.Executor, cfg *config.Pro
 	return nil
 }
 
-// swapContainers performs the atomic swap: stop old container, rename new → final, update symlink.
-func swapContainers(ctx context.Context, client ssh.Executor, appName, appPath, tag, tempContainerName string) error {
+// swapContainers performs the zero-downtime swap: the old container is renamed
+// away while still running (in-flight requests keep being served and the app
+// name frees up instantly), the new container takes over the name, and only
+// then is the old one stopped. If taking over the name fails, the old
+// container is renamed back so the site keeps being served.
+func swapContainers(ctx context.Context, client ssh.Executor, appName, appPath, tag, tempContainerName string, oldExists bool) error {
 	releasePath := filepath.Join(appPath, "releases", tag)
 	currentPath := filepath.Join(appPath, "current")
+	oldName := appName + "-old"
 
-	// Stop and remove old container
-	stopAndRemoveContainer(ctx, client, appName)
+	// Remove any stale -old leftover from a previously interrupted swap
+	forceRemoveContainer(ctx, client, oldName)
+
+	if oldExists {
+		// Move the live container out of the name without stopping it. If this
+		// fails, abort before touching anything: the old container keeps its
+		// name and keeps serving.
+		result, err := client.Exec(ctx, fmt.Sprintf("docker rename %s %s", appName, oldName))
+		if err != nil {
+			return fmt.Errorf("failed to rename old container: %w", err)
+		}
+		if err := result.Err(); err != nil {
+			return fmt.Errorf("failed to rename old container: %w", err)
+		}
+	}
 
 	// Rename temp container to final name
 	result, err := client.Exec(ctx, fmt.Sprintf("docker rename %s %s", tempContainerName, appName))
+	if err == nil {
+		err = result.Err()
+	}
 	if err != nil {
+		if oldExists {
+			// Restore the old container under the app name: the site stays up.
+			if restoreResult, restoreErr := client.Exec(ctx, fmt.Sprintf("docker rename %s %s", oldName, appName)); restoreErr != nil {
+				PrintWarning("Could not restore old container: %v", restoreErr)
+			} else if restoreErr := restoreResult.Err(); restoreErr != nil {
+				PrintWarning("Could not restore old container: %v", restoreErr)
+			} else {
+				PrintWarning("Swap failed — old container restored, the site is still served by the previous version")
+			}
+		}
 		return fmt.Errorf("failed to rename container: %w", err)
 	}
-	if err := result.Err(); err != nil {
-		return fmt.Errorf("failed to rename container: %w", err)
+
+	// Point of no return passed: the new container serves under the app name.
+	// Stopping the old one is best-effort cleanup.
+	if oldExists {
+		stopAndRemoveContainer(ctx, client, oldName)
 	}
 
 	// Update current symlink (critical step — surface any non-zero exit code)

@@ -59,30 +59,17 @@ func NewDeployState(appName string) *DeployState {
 	}
 }
 
-// RollbackActions returns the commands needed to rollback from the current phase.
-// The goal is to restore the previous state: if the old container was running,
-// it stays running. If a new temp container was started, it gets removed.
+// RollbackActions returns the commands undoing a failed deploy: removing the
+// temporary container. It must NEVER target the live app name — during the
+// swap phase a failure leaves either the old container (restored by
+// swapContainers) or the new one serving under the app name, and past the
+// swap the new version is live.
 func (s *DeployState) RollbackActions() []string {
-	var actions []string
-
-	switch {
-	case s.Phase >= PhaseStartNewContainer && s.Phase < PhaseSwapContainers:
-		// New container was started with temp name, old is still running.
-		// Just remove the new temp container.
-		actions = append(actions,
+	if s.Phase >= PhaseStartNewContainer && s.Phase <= PhaseSwapContainers {
+		return []string{
 			fmt.Sprintf("docker stop %s 2>/dev/null || true", s.TempContainerName),
 			fmt.Sprintf("docker rm %s 2>/dev/null || true", s.TempContainerName),
-		)
-
-	case s.Phase >= PhaseSwapContainers:
-		// Swap already happened: old container is gone, new container is renamed.
-		// To rollback we'd need to restart the previous release image.
-		// This is handled by the rollback command, not inline.
-		actions = append(actions,
-			fmt.Sprintf("docker stop %s 2>/dev/null || true", s.AppName),
-			fmt.Sprintf("docker rm %s 2>/dev/null || true", s.AppName),
-		)
+		}
 	}
-
-	return actions
+	return nil
 }
