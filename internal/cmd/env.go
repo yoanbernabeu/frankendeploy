@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/yoanbernabeu/frankendeploy/internal/config"
 	"github.com/yoanbernabeu/frankendeploy/internal/constants"
 	"github.com/yoanbernabeu/frankendeploy/internal/security"
 	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
@@ -165,7 +166,7 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 
 	// Reload container if requested
 	if envSetReload {
-		if err := reloadContainer(ctx, conn.Client, conn.Project.Name); err != nil {
+		if err := reloadContainer(ctx, conn.Client, conn.Project); err != nil {
 			PrintWarning("Failed to reload: %v", err)
 			PrintInfo("Changes will take effect on next deployment")
 		} else {
@@ -351,7 +352,7 @@ func runEnvPush(cmd *cobra.Command, args []string) error {
 
 	// Reload container if requested
 	if envPushReload {
-		if err := reloadContainer(ctx, conn.Client, conn.Project.Name); err != nil {
+		if err := reloadContainer(ctx, conn.Client, conn.Project); err != nil {
 			PrintWarning("Failed to reload: %v", err)
 			PrintInfo("Changes will take effect on next deployment")
 		} else {
@@ -431,13 +432,16 @@ func buildEnvContent(vars map[string]string) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-// reloadContainer performs a rolling restart to apply env changes with minimal downtime
-func reloadContainer(ctx context.Context, client *ssh.Client, appName string) error {
+// reloadContainer performs a rolling restart to apply env changes without
+// downtime. It reuses the deploy primitives: same docker run command (mounts,
+// managed DATABASE_URL, restart policy) and the same rename-based swap.
+func reloadContainer(ctx context.Context, client ssh.Executor, cfg *config.ProjectConfig) error {
+	appName := cfg.Name
 	PrintInfo("Reloading container...")
 
 	// Get current container info
 	result, err := client.Exec(ctx, fmt.Sprintf("docker inspect %s --format '{{.Config.Image}}'", appName))
-	if err != nil || result.ExitCode != 0 {
+	if err != nil || result == nil || result.ExitCode != 0 {
 		return fmt.Errorf("container not running")
 	}
 	imageName := strings.TrimSpace(result.Stdout)
@@ -445,37 +449,24 @@ func reloadContainer(ctx context.Context, client *ssh.Client, appName string) er
 	appPath := constants.AppBasePath(appName)
 	tempName := appName + "-new"
 
-	// Start new container with updated env
-	startCmd := fmt.Sprintf(`docker run -d --name %s \
-		--network %s \
-		--user %s \
-		-e SERVER_NAME=:%s \
-		-e APP_ENV=prod \
-		-e APP_DEBUG=0 \
-		-v %s/shared/.env.local:/app/.env.local:ro \
-		%s`, tempName, constants.NetworkName, constants.ContainerUser, constants.AppPort, appPath, imageName)
-
-	result, err = client.Exec(ctx, startCmd)
-	if err != nil {
-		return fmt.Errorf("failed to start new container: %w", err)
-	}
-	if err := result.Err(); err != nil {
-		return fmt.Errorf("failed to start new container: %w", err)
+	// Start new container with updated env (same command as deploy/rollback)
+	databaseURL := readSavedDatabaseURL(ctx, client, appPath)
+	if err := startNewContainer(ctx, client, cfg, imageName, appPath, "", databaseURL, tempName); err != nil {
+		return err
 	}
 
 	// Wait for new container to be healthy
 	PrintInfo("Waiting for new container to be ready...")
 	for i := 0; i < 30; i++ {
-		result, _ := client.Exec(ctx, fmt.Sprintf("docker inspect %s --format '{{.State.Health.Status}}' 2>/dev/null || echo 'starting'", tempName))
-		status := strings.TrimSpace(result.Stdout)
+		status := "starting"
+		if result, err := client.Exec(ctx, fmt.Sprintf("docker inspect %s --format '{{.State.Health.Status}}' 2>/dev/null || echo 'starting'", tempName)); err == nil && result != nil {
+			status = strings.TrimSpace(result.Stdout)
+		}
 		if status == "healthy" {
 			break
 		}
 		if i == 29 {
-			// Cleanup and fail
-			if _, err := client.Exec(ctx, fmt.Sprintf("docker rm -f %s", tempName)); err != nil {
-				PrintWarning("Failed to cleanup temporary container: %v", err)
-			}
+			forceRemoveContainer(ctx, client, tempName)
 			return fmt.Errorf("new container failed health check")
 		}
 		if _, err := client.Exec(ctx, "sleep 2"); err != nil {
@@ -483,15 +474,10 @@ func reloadContainer(ctx context.Context, client *ssh.Client, appName string) er
 		}
 	}
 
-	// Stop old container and rename new one
-	if _, err := client.Exec(ctx, fmt.Sprintf("docker stop %s", appName)); err != nil {
-		PrintWarning("Failed to stop old container: %v", err)
-	}
-	if _, err := client.Exec(ctx, fmt.Sprintf("docker rm %s", appName)); err != nil {
-		PrintWarning("Failed to remove old container: %v", err)
-	}
-	if _, err := client.Exec(ctx, fmt.Sprintf("docker rename %s %s", tempName, appName)); err != nil {
-		PrintWarning("Failed to rename container: %v", err)
+	// Zero-downtime name handover with restore on failure (same as deploy)
+	if err := swapContainerNames(ctx, client, appName, tempName, true); err != nil {
+		forceRemoveContainer(ctx, client, tempName)
+		return err
 	}
 
 	return nil

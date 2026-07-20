@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -16,6 +17,11 @@ var rollbackCmd = &cobra.Command{
 
 If no release is specified, rolls back to the immediately previous release.
 
+The rollback uses the same pipeline as a deployment: the target release is
+started with the same mounts and environment (including the managed database
+URL), health checked, and swapped in without downtime. If the health check
+fails, the current version keeps running.
+
 Example:
   frankendeploy rollback production           # Rollback to previous
   frankendeploy rollback production 20240115  # Rollback to specific release`,
@@ -25,6 +31,45 @@ Example:
 
 func init() {
 	rootCmd.AddCommand(rollbackCmd)
+}
+
+// findPreviousRelease returns the release that precedes current in reverse
+// lexicographic order (release tags default to sortable timestamps). It
+// ignores the current release itself and returns an error when there is
+// nothing to roll back to.
+func findPreviousRelease(releases []string, current string) (string, error) {
+	sorted := make([]string, 0, len(releases))
+	for _, r := range releases {
+		if r != "" {
+			sorted = append(sorted, r)
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(sorted)))
+
+	currentKnown := false
+	for _, r := range sorted {
+		if r == current {
+			currentKnown = true
+			break
+		}
+	}
+
+	if currentKnown {
+		// Newest release strictly older than the current one — a second
+		// rollback must not bounce forward to a newer release.
+		for _, r := range sorted {
+			if r < current {
+				return r, nil
+			}
+		}
+		return "", fmt.Errorf("no previous release available")
+	}
+
+	// Current release unknown (broken symlink?): newest available release.
+	if len(sorted) > 0 {
+		return sorted[0], nil
+	}
+	return "", fmt.Errorf("no previous release available")
 }
 
 func runRollback(cmd *cobra.Command, args []string) error {
@@ -47,72 +92,86 @@ func runRollback(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer conn.Client.Close()
-
-	appPath := constants.AppBasePath(conn.Project.Name)
+	client := conn.Client
+	cfg := conn.Project
+	appName := cfg.Name
+	appPath := constants.AppBasePath(appName)
 
 	PrintInfo("Connecting to %s...", conn.Server.Host)
 
 	// Get current release
-	result, _ := conn.Client.Exec(ctx, fmt.Sprintf("readlink %s/current | xargs basename", appPath))
-	currentRelease := strings.TrimSpace(result.Stdout)
+	currentRelease := ""
+	if result, err := client.Exec(ctx, fmt.Sprintf("readlink %s/current | xargs basename", appPath)); err == nil && result != nil {
+		currentRelease = strings.TrimSpace(result.Stdout)
+	}
 
 	if targetRelease == "" {
-		// Get previous release
-		result, err := conn.Client.Exec(ctx, fmt.Sprintf("ls -1t %s/releases | head -2 | tail -1", appPath))
+		listResult, err := client.Exec(ctx, fmt.Sprintf("ls -1 %s/releases", appPath))
 		if err != nil {
-			return fmt.Errorf("failed to get releases: %w", err)
+			return fmt.Errorf("failed to list releases: %w", err)
 		}
-		targetRelease = strings.TrimSpace(result.Stdout)
-
-		if targetRelease == "" || targetRelease == currentRelease {
-			return fmt.Errorf("no previous release available")
+		if err := listResult.Err(); err != nil {
+			return fmt.Errorf("failed to list releases: %w", err)
+		}
+		targetRelease, err = findPreviousRelease(strings.Fields(listResult.Stdout), currentRelease)
+		if err != nil {
+			return err
 		}
 	}
 
 	// Verify target release exists
-	releasePath := constants.AppReleasePath(conn.Project.Name, targetRelease)
-	result, _ = conn.Client.Exec(ctx, fmt.Sprintf("test -d %s && echo 'exists'", releasePath))
-	if !strings.Contains(result.Stdout, "exists") {
-		// List available releases
-		result, _ = conn.Client.Exec(ctx, fmt.Sprintf("ls -1t %s/releases", appPath))
-		return fmt.Errorf("release '%s' not found. Available releases:\n%s", targetRelease, result.Stdout)
+	releasePath := constants.AppReleasePath(appName, targetRelease)
+	existsResult, err := client.Exec(ctx, fmt.Sprintf("test -d %s && echo 'exists'", releasePath))
+	if err != nil || existsResult == nil || !strings.Contains(existsResult.Stdout, "exists") {
+		available := ""
+		if listResult, listErr := client.Exec(ctx, fmt.Sprintf("ls -1t %s/releases", appPath)); listErr == nil && listResult != nil {
+			available = listResult.Stdout
+		}
+		return fmt.Errorf("release '%s' not found. Available releases:\n%s", targetRelease, available)
+	}
+
+	// Verify the release image still exists on the server
+	imageName := fmt.Sprintf("%s:%s", appName, targetRelease)
+	imageResult, err := client.Exec(ctx, fmt.Sprintf("docker image inspect %s --format ok 2>/dev/null", imageName))
+	if err != nil || imageResult == nil || !strings.Contains(imageResult.Stdout, "ok") {
+		return fmt.Errorf("image %s no longer exists on the server — cannot roll back to this release", imageName)
 	}
 
 	PrintInfo("Rolling back from %s to %s...", currentRelease, targetRelease)
 
-	// Blue-green rollback: start new container first, then stop old
-	imageName := fmt.Sprintf("%s:%s", conn.Project.Name, targetRelease)
-	tempName := conn.Project.Name + "-rollback"
+	// Same pipeline as deploy: managed database URL, mounts, restart policy
+	databaseURL := readSavedDatabaseURL(ctx, client, appPath)
+	tempName := appName + "-rollback"
 
-	// Start the target release container with a temporary name
-	startCmd := fmt.Sprintf(`docker run -d --name %s \
-		--network %s \
-		--restart unless-stopped \
-		--user %s \
-		-e SERVER_NAME=:%s \
-		-e APP_ENV=prod \
-		-e APP_DEBUG=0 \
-		-v %s/shared/.env.local:/app/.env.local:ro \
-		%s`, tempName, constants.NetworkName, constants.ContainerUser, constants.AppPort, appPath, imageName)
-
-	result, err = conn.Client.Exec(ctx, startCmd)
-	if err != nil {
-		return fmt.Errorf("failed to start container: %w", err)
-	}
-	if err := result.Err(); err != nil {
-		return fmt.Errorf("failed to start container: %w", err)
+	if err := startNewContainer(ctx, client, cfg, imageName, appPath, targetRelease, databaseURL, tempName); err != nil {
+		return err
 	}
 
-	// Stop old container and rename new one
-	stopAndRemoveContainer(ctx, conn.Client, conn.Project.Name)
-	if _, err := conn.Client.Exec(ctx, fmt.Sprintf("docker rename %s %s", tempName, conn.Project.Name)); err != nil {
-		PrintWarning("Failed to rename container: %v", err)
+	// Health check the rollback container before touching the live one
+	PrintInfo("Running health check...")
+	if err := runHealthCheckOnContainer(ctx, client, cfg, tempName); err != nil {
+		forceRemoveContainer(ctx, client, tempName)
+		return fmt.Errorf("rollback aborted, current version untouched: %w", err)
+	}
+	PrintSuccess("Health check passed")
+
+	// Zero-downtime swap with restore on failure (same as deploy)
+	oldExists := false
+	if psResult, psErr := client.Exec(ctx, fmt.Sprintf("docker ps -q -f name=^%s$", appName)); psErr == nil && psResult != nil {
+		oldExists = strings.TrimSpace(psResult.Stdout) != ""
+	}
+	PrintInfo("Swapping containers...")
+	if err := swapContainers(ctx, client, appName, appPath, targetRelease, tempName, oldExists); err != nil {
+		forceRemoveContainer(ctx, client, tempName)
+		return fmt.Errorf("swap failed: %w", err)
 	}
 
-	// Update current symlink
-	currentPath := constants.AppCurrentPath(conn.Project.Name)
-	if _, err := conn.Client.Exec(ctx, fmt.Sprintf("ln -sfn %s %s", releasePath, currentPath)); err != nil {
-		PrintWarning("Failed to update symlink: %v", err)
+	// Roll back the Messenger worker to the same image
+	if cfg.Messenger.Enabled {
+		PrintInfo("Rolling back Messenger worker...")
+		if err := deployMessengerWorkers(ctx, client, cfg, imageName, appPath, databaseURL); err != nil {
+			PrintWarning("Failed to roll back Messenger worker: %v", err)
+		}
 	}
 
 	PrintSuccess("Rolled back to release %s", targetRelease)
