@@ -22,42 +22,62 @@ log_error() {
     echo "${RED}[FrankenDeploy]${NC} $1"
 }
 
-# Wait for database to be ready
+# Wait for database to be ready.
+# Host and port are extracted with POSIX parameter expansion only: this
+# handles URLs without an explicit port (fallback to the scheme default)
+# and credentials containing '@' or ':'.
 wait_for_database() {
-    if [ -n "$DATABASE_URL" ]; then
-        case "$DATABASE_URL" in
-            postgresql://*)
-                DB_HOST=$(echo "$DATABASE_URL" | sed -E 's|postgresql://[^@]+@([^:/]+).*|\1|')
-                DB_PORT=$(echo "$DATABASE_URL" | sed -E 's|postgresql://[^@]+@[^:]+:([0-9]+).*|\1|')
-                DB_PORT=${DB_PORT:-5432}
-                ;;
-            mysql://*)
-                DB_HOST=$(echo "$DATABASE_URL" | sed -E 's|mysql://[^@]+@([^:/]+).*|\1|')
-                DB_PORT=$(echo "$DATABASE_URL" | sed -E 's|mysql://[^@]+@[^:]+:([0-9]+).*|\1|')
-                DB_PORT=${DB_PORT:-3306}
-                ;;
-            sqlite://*)
-                return 0
-                ;;
-            *)
-                return 0
-                ;;
-        esac
+    if [ -z "$DATABASE_URL" ]; then
+        return 0
+    fi
 
-        if [ -n "$DB_HOST" ] && [ "$DB_HOST" != "localhost" ]; then
-            log_info "Waiting for database at $DB_HOST:$DB_PORT..."
-            ATTEMPTS=0
-            MAX_ATTEMPTS={{ .MaxDBWaitAttempts }}
-            until nc -z "$DB_HOST" "$DB_PORT" 2>/dev/null || [ $ATTEMPTS -eq $MAX_ATTEMPTS ]; do
-                ATTEMPTS=$((ATTEMPTS + 1))
-                sleep {{ .DBWaitInterval }}
-            done
-            if [ $ATTEMPTS -eq $MAX_ATTEMPTS ]; then
-                log_error "Database not available"
-                exit 1
-            fi
-            log_info "Database is ready!"
+    case "$DATABASE_URL" in
+        postgresql://*|postgres://*|pgsql://*)
+            DB_DEFAULT_PORT=5432
+            ;;
+        mysql://*|mysql2://*|mariadb://*)
+            DB_DEFAULT_PORT=3306
+            ;;
+        *)
+            # sqlite and unknown schemes: nothing to wait for
+            return 0
+            ;;
+    esac
+
+    # scheme://user:pass@host:port/db?query -> host:port
+    DB_HOSTPORT="${DATABASE_URL#*://}"
+    DB_HOSTPORT="${DB_HOSTPORT%%/*}"
+    DB_HOSTPORT="${DB_HOSTPORT%%\?*}"
+    DB_HOSTPORT="${DB_HOSTPORT##*@}"
+
+    DB_HOST="${DB_HOSTPORT%%:*}"
+    case "$DB_HOSTPORT" in
+        *:*) DB_PORT="${DB_HOSTPORT##*:}" ;;
+        *)   DB_PORT="$DB_DEFAULT_PORT" ;;
+    esac
+    # Fall back to the scheme default if the port is not a number
+    case "$DB_PORT" in
+        ''|*[!0-9]*) DB_PORT="$DB_DEFAULT_PORT" ;;
+    esac
+
+    if [ -z "$DB_HOST" ]; then
+        log_warn "Could not parse host from DATABASE_URL, skipping database wait"
+        return 0
+    fi
+
+    if [ "$DB_HOST" != "localhost" ]; then
+        log_info "Waiting for database at $DB_HOST:$DB_PORT..."
+        ATTEMPTS=0
+        MAX_ATTEMPTS={{ .MaxDBWaitAttempts }}
+        until nc -z "$DB_HOST" "$DB_PORT" 2>/dev/null || [ $ATTEMPTS -eq $MAX_ATTEMPTS ]; do
+            ATTEMPTS=$((ATTEMPTS + 1))
+            sleep {{ .DBWaitInterval }}
+        done
+        if [ $ATTEMPTS -eq $MAX_ATTEMPTS ]; then
+            log_error "Database not available"
+            exit 1
         fi
+        log_info "Database is ready!"
     fi
 }
 
