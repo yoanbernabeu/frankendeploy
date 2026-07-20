@@ -140,8 +140,9 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	} else {
 		// Local build: build locally and transfer image
 		if !deployNoBuild {
-			PrintInfo("Building Docker image locally...")
-			if err := buildDockerImage(imageName); err != nil {
+			platform := buildPlatformForServer(ctx, client)
+			PrintInfo("Building Docker image locally (%s)...", platform)
+			if err := buildDockerImage(imageName, platform); err != nil {
 				return fmt.Errorf("build failed: %w", err)
 			}
 			PrintSuccess("Image built: %s", imageName)
@@ -272,10 +273,31 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func buildDockerImage(imageName string) error {
-	// Use buildx to cross-compile for linux/amd64 (VPS architecture)
+// buildPlatformForServer returns the docker --platform value matching the
+// server's CPU architecture, so a local build always produces an image the
+// server can run (e.g. arm64 Mac → arm64 VPS must NOT build amd64).
+// Falls back to linux/amd64 when detection fails.
+func buildPlatformForServer(ctx context.Context, client ssh.Executor) string {
+	result, err := client.Exec(ctx, "uname -m")
+	if err != nil || result == nil || result.Err() != nil {
+		PrintWarning("Could not detect server architecture, building for linux/amd64")
+		return "linux/amd64"
+	}
+
+	arch := normalizeArch(result.Stdout)
+	switch arch {
+	case "amd64", "arm64":
+		return "linux/" + arch
+	default:
+		PrintWarning("Unknown server architecture %q, building for linux/amd64", arch)
+		return "linux/amd64"
+	}
+}
+
+func buildDockerImage(imageName, platform string) error {
+	// Use buildx to cross-compile for the server's architecture
 	dockerCmd := exec.Command("docker", "buildx", "build",
-		"--platform", "linux/amd64",
+		"--platform", platform,
 		"--target", "frankenphp_prod",
 		"--load",
 		"-t", imageName,
