@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-20
+
+This release closes every P0 finding from the production-readiness audit. All fixes were validated live on a real VPS deployment (API Platform app, managed PostgreSQL, SSH gateway, Let's Encrypt).
+
+### Added
+
+- **API Platform Auto-Detection**: Detect `api-platform/core` / `api-platform/symfony` and default the healthcheck path to `/api` — a pure API returns 404 on `/`, which previously caused guaranteed rollbacks of healthy deployments (#65) - @yoanbernabeu
+
+### Fixed
+
+- **Scanner Panic**: `init` crashed (SIGSEGV) on projects without `package.json`, such as an API Platform skeleton (#63) - @yoanbernabeu
+- **PHP Version Floor**: A stock Symfony 6.4 skeleton (`php: >=8.1`) generated the nonexistent `frankenphp:1-php8.1` image; versions are now floored at 8.2 with an explicit warning, and exclusive upper bounds (`<8.4`) are respected (#64) - @yoanbernabeu
+- **Entrypoint Crash-Loop**: `DATABASE_URL` without an explicit port (the standard managed-DB case) crash-looped the container; host/port are now parsed with POSIX expansion, covering all Doctrine schemes and passwords containing `@` (#66) - @yoanbernabeu
+- **Caddy Health Check**: The generated app config hardcoded `health_uri /`, marking API-only upstreams unhealthy and turning every request into a 503; it now follows `deploy.healthcheck_path` (#69) - @yoanbernabeu
+- **Zero-Downtime Swap**: The container swap did stop → rm → rename, guaranteeing a downtime window and leaving the site down permanently on a failed rename; the swap is now rename-based (measured live: 0 dropped requests) with automatic restore of the old container on failure (#71) - @yoanbernabeu
+- **Rollback Parity**: Rollback lost shared dirs and the managed `DATABASE_URL`, swallowed errors, had no health check and could select a release newer than the current one; it now reuses the full deploy pipeline (same mounts/env, health check before swap, zero-downtime handover, worker rollback), and `env --reload` was unified on the same primitives (#72) - @yoanbernabeu
+
+### Security
+
+- **Shell Injection via shared_files**: `shared_files` entries were interpolated raw into remote shell commands without validation (#67) - @yoanbernabeu
+- **SSH Lockout Prevention**: `server setup` opened hardcoded port 22 in UFW before enabling it, locking users out of servers with a custom SSH port; the configured port and the actual sshd session port are now both allowed before the firewall goes up (#68) - @yoanbernabeu
+
 ## [0.8.1] - 2026-07-20
 
 ### Fixed
@@ -79,7 +101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial public release with core deployment features.
 
-[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.6.0...v0.7.0
