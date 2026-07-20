@@ -129,6 +129,10 @@ func printInitSummary(result *config.ScanResult, cfg *config.ProjectConfig) {
 		fmt.Printf("   Domain:      %s\n", cfg.Deploy.Domain)
 	}
 
+	if result.HasAPIPlatform {
+		fmt.Printf("   Healthcheck: %s (API Platform detected)\n", cfg.Deploy.HealthcheckPath)
+	}
+
 	fmt.Println()
 	fmt.Println("Next steps:")
 	fmt.Println("  1. Review frankendeploy.yaml and adjust if needed")

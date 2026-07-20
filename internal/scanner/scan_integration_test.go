@@ -51,6 +51,40 @@ func TestScanner_Scan_APIPlatformWithoutPackageJSON(t *testing.T) {
 	if result.Database.Driver != "pgsql" {
 		t.Errorf("expected pgsql database driver, got %q", result.Database.Driver)
 	}
+	if !result.HasAPIPlatform {
+		t.Error("expected HasAPIPlatform to be true")
+	}
+
+	cfg := New(tempDir).ToProjectConfig(result, "apiproject")
+	if cfg.Deploy.HealthcheckPath != "/api" {
+		t.Errorf("expected healthcheck path /api for API Platform project, got %q", cfg.Deploy.HealthcheckPath)
+	}
+}
+
+// TestScanner_Scan_APIPlatform4SymfonyPackage covers the API Platform 4 split
+// packages, where Symfony projects require api-platform/symfony instead of
+// api-platform/core.
+func TestScanner_Scan_APIPlatform4SymfonyPackage(t *testing.T) {
+	tempDir := t.TempDir()
+
+	writeProjectFile(t, tempDir, "composer.json", `{
+		"require": {
+			"php": ">=8.2",
+			"symfony/framework-bundle": "^7.1",
+			"api-platform/symfony": "^4.0"
+		}
+	}`)
+
+	result, err := New(tempDir).Scan()
+	if err != nil {
+		t.Fatalf("Scan() failed: %v", err)
+	}
+	if !result.HasAPIPlatform {
+		t.Error("expected HasAPIPlatform to be true for api-platform/symfony")
+	}
+	if cfg := New(tempDir).ToProjectConfig(result, "app"); cfg.Deploy.HealthcheckPath != "/api" {
+		t.Errorf("expected healthcheck path /api, got %q", cfg.Deploy.HealthcheckPath)
+	}
 }
 
 // TestScanner_Scan_PackageJSONWithoutBuildScript covers the second nil-return path of
@@ -75,6 +109,13 @@ func TestScanner_Scan_PackageJSONWithoutBuildScript(t *testing.T) {
 	}
 	if result.Assets.BuildTool != "" {
 		t.Errorf("expected no asset build tool, got %q", result.Assets.BuildTool)
+	}
+	if result.HasAPIPlatform {
+		t.Error("expected HasAPIPlatform to be false without api-platform packages")
+	}
+	// Non-API Platform projects keep the default healthcheck path
+	if cfg := New(tempDir).ToProjectConfig(result, "app"); cfg.Deploy.HealthcheckPath != "/" {
+		t.Errorf("expected default healthcheck path /, got %q", cfg.Deploy.HealthcheckPath)
 	}
 }
 

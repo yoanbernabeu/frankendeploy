@@ -63,6 +63,8 @@ func (s *Scanner) Scan() (*config.ScanResult, error) {
 	result.HasDoctrine = s.HasDoctrine()
 	result.HasMessenger = s.HasMessenger()
 	result.HasMailer = s.HasMailer()
+	// api-platform/core (v2/v3) or api-platform/symfony (v4 split packages)
+	result.HasAPIPlatform = composer.HasAnyPackage("api-platform/core", "api-platform/symfony")
 
 	// Add required extensions based on detected features
 	result.PHPExtensions = s.enhanceExtensions(result.PHPExtensions, result)
@@ -172,6 +174,12 @@ func (s *Scanner) ToProjectConfig(result *config.ScanResult, name string) *confi
 	cfg.PHP.Extensions = result.PHPExtensions
 	cfg.Database = result.Database
 	cfg.Assets = result.Assets
+
+	// A pure API Platform app typically returns 404 on "/" in prod, which
+	// would fail the deploy health check: default to the API entrypoint.
+	if result.HasAPIPlatform {
+		cfg.Deploy.HealthcheckPath = "/api"
+	}
 
 	// For SQLite, add the database directory to shared_dirs for persistence
 	if result.Database.Driver == "sqlite" && result.Database.Path != "" {

@@ -143,16 +143,17 @@ type AppConfig struct {
 
 // ScanResult holds the result of project scanning
 type ScanResult struct {
-	IsSymfony     bool
-	PHPVersion    string
-	PHPExtensions []string
-	Database      DatabaseConfig
-	Assets        AssetsConfig
-	HasDoctrine   bool
-	HasMessenger  bool
-	HasMailer     bool
-	Framework     string
-	Warnings      []string
+	IsSymfony      bool
+	PHPVersion     string
+	PHPExtensions  []string
+	Database       DatabaseConfig
+	Assets         AssetsConfig
+	HasDoctrine    bool
+	HasMessenger   bool
+	HasMailer      bool
+	HasAPIPlatform bool
+	Framework      string
+	Warnings       []string
 }
 
 // DefaultProjectConfig returns a default project configuration
