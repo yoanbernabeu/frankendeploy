@@ -287,6 +287,27 @@ func autoTryKeys(serverCfg *config.ServerConfig, keys []ssh.SSHKeyInfo) *ssh.SSH
 	return nil
 }
 
+// buildFirewallCommands returns the UFW commands for server setup. Every SSH
+// port is allowed before ufw is enabled: never enable the firewall without
+// having allowed the port(s) SSH is reachable on, or the user gets locked
+// out of their own server. Invalid ports (<= 0) are filtered out.
+func buildFirewallCommands(sshPorts []int) []string {
+	cmds := make([]string, 0, len(sshPorts)+3)
+	seen := make(map[int]bool)
+	for _, port := range sshPorts {
+		if port > 0 && !seen[port] {
+			seen[port] = true
+			cmds = append(cmds, fmt.Sprintf("sudo ufw allow %d/tcp || true", port))
+		}
+	}
+	cmds = append(cmds,
+		"sudo ufw allow 80/tcp || true",
+		"sudo ufw allow 443/tcp || true",
+		"sudo ufw --force enable || true",
+	)
+	return cmds
+}
+
 func runServerSetup(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	name := args[0]
@@ -397,14 +418,16 @@ CADDYEOF`, constants.CaddyDir, mainConfig)
 
 	// Step 5: Configure firewall and start Caddy container
 	PrintInfo("[5/5] Configuring firewall and starting Caddy...")
-	firewallCommands := []string{
-		// Configure UFW firewall
-		"sudo ufw allow 22/tcp || true",
-		"sudo ufw allow 80/tcp || true",
-		"sudo ufw allow 443/tcp || true",
-		"sudo ufw --force enable || true",
+	sshPorts := []int{conn.Server.Port}
+	// Behind a gateway/NAT, sshd may receive connections on a different port
+	// than the client-side one: also allow the port of the current session
+	// ($SSH_CONNECTION is "client_ip client_port server_ip server_port").
+	if result, err := client.Exec(ctx, `echo "${SSH_CONNECTION##* }"`); err == nil && result != nil {
+		if port, convErr := strconv.Atoi(strings.TrimSpace(result.Stdout)); convErr == nil {
+			sshPorts = append(sshPorts, port)
+		}
 	}
-	if err := runCommandsWithProgress(ctx, client, firewallCommands); err != nil {
+	if err := runCommandsWithProgress(ctx, client, buildFirewallCommands(sshPorts)); err != nil {
 		return err
 	}
 
@@ -447,7 +470,16 @@ CADDYEOF`, constants.CaddyDir, mainConfig)
 	fmt.Printf("  Email:    %s (for Let's Encrypt)\n", setupEmail)
 	fmt.Println("  Caddy:    Docker container with Admin API")
 	fmt.Println("  Docker:   Installed with 'frankendeploy' network")
-	fmt.Println("  Firewall: Ports 22, 80, 443 open")
+	openPorts := make([]string, 0, len(sshPorts)+2)
+	seenPort := make(map[int]bool)
+	for _, port := range sshPorts {
+		if port > 0 && !seenPort[port] {
+			seenPort[port] = true
+			openPorts = append(openPorts, strconv.Itoa(port))
+		}
+	}
+	openPorts = append(openPorts, "80", "443")
+	fmt.Printf("  Firewall: Ports %s open\n", strings.Join(openPorts, ", "))
 	fmt.Println("  Fail2ban: SSH protection enabled (5 retries, 1h ban)")
 	fmt.Println()
 	fmt.Println("Next step:")
