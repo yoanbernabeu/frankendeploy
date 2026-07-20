@@ -24,14 +24,26 @@ type AppConfig struct {
 	Name   string
 	Domain string
 	Port   int
+	// HealthPath is the URL probed by Caddy's active health check.
+	// It must match the application's healthcheck path: an API-only app
+	// returns 404 on "/", which would mark the upstream unhealthy and
+	// turn every request into a 503.
+	HealthPath string
 }
 
 // GenerateAppConfig generates Caddy config for an application
 func (g *ConfigGenerator) GenerateAppConfig(app AppConfig) (string, error) {
+	if err := security.ValidateHealthPath(app.HealthPath); err != nil {
+		return "", fmt.Errorf("invalid health path: %w", err)
+	}
+	if app.HealthPath == "" {
+		app.HealthPath = "/"
+	}
+
 	tmpl := `# {{ .Name }}
 {{ .Domain }} {
     reverse_proxy {{ .Name }}:{{ .Port }} {
-        health_uri /
+        health_uri {{ .HealthPath }}
         health_interval 30s
         health_timeout 5s
     }
@@ -97,9 +109,10 @@ import /config/apps/*.caddy
 func AppConfigFromProject(cfg *config.ProjectConfig, domain string) AppConfig {
 	port, _ := strconv.Atoi(constants.AppPort)
 	return AppConfig{
-		Name:   cfg.Name,
-		Domain: domain,
-		Port:   port,
+		Name:       cfg.Name,
+		Domain:     domain,
+		Port:       port,
+		HealthPath: cfg.Deploy.HealthcheckPath,
 	}
 }
 
