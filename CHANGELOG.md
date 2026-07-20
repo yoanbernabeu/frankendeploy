@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-20
+
+This release closes the "first contact" wave of the production-readiness audit: every fix targets a situation where a first-time user was left blocked or misled. All changes were validated live on a real VPS.
+
+### Added
+
+- **Self-Sufficient Deploy**: `deploy` generates missing Docker artifacts (`Dockerfile`, `docker-entrypoint.sh`, `.dockerignore`) automatically — the novice flow `init` → `deploy` no longer dies on a cryptic "open Dockerfile: no such file or directory"; customized files are never overwritten (#73) - @yoanbernabeu
+- **Health Check Tuning**: New `deploy.healthcheck_timeout` / `healthcheck_retries` / `healthcheck_interval` YAML settings, and new `--skip-env-check` / `--skip-healthcheck` deploy flags (#76) - @yoanbernabeu
+
+### Fixed
+
+- **Cross-Architecture Build**: The local Docker build hardcoded `--platform linux/amd64`; an Apple Silicon Mac deploying to an ARM VPS (Hetzner CAX, AWS Graviton) produced an unusable image surfacing as an unexplained health check failure. The platform now follows the detected server architecture (#75) - @yoanbernabeu
+- **Health Check UX**: On failure, the last 50 log lines of the failing container are printed before rollback removes it; the default window grew from ~15s to 90s (a cold Symfony container needs opcache warmup and DB wait); `--force` no longer prints "Health check passed" after a failure; SSH drops during checks no longer crash the CLI (#76) - @yoanbernabeu
+- **Honest First Deploy**: A Caddy configuration failure (container stopped, reload error) on the app's first public exposure now fails the deploy with an explicit "NOT publicly reachable" error instead of printing "Deployment complete!" with an unreachable URL; the caddy container is checked before the reload (#77) - @yoanbernabeu
+
+### Documentation
+
+- **Docs Site Sync**: The static site had not been updated since v0.6.0 and documented pre-blue-green behavior, broken download URLs (404), PHP 8.1 support, and a nonexistent worker mode; every page now matches the actual behavior (#74) - @yoanbernabeu
+
 ## [0.9.0] - 2026-07-20
 
 This release closes every P0 finding from the production-readiness audit. All fixes were validated live on a real VPS deployment (API Platform app, managed PostgreSQL, SSH gateway, Let's Encrypt).
@@ -101,7 +120,8 @@ This release closes every P0 finding from the production-readiness audit. All fi
 
 Initial public release with core deployment features.
 
-[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.7.0...v0.8.0

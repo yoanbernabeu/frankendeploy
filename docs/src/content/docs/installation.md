@@ -30,11 +30,11 @@ brew install frankendeploy
 
 ## Manual Download
 
-Download the binary for your platform from the [GitHub Releases](https://github.com/yoanbernabeu/frankendeploy/releases) page. Archive names include the version number, e.g. `frankendeploy_0.9.0_linux_amd64.tar.gz`.
+Download the binary for your platform from the [GitHub Releases](https://github.com/yoanbernabeu/frankendeploy/releases) page. Archive names include the version number, e.g. `frankendeploy_0.10.0_linux_amd64.tar.gz`.
 
 ### Linux (amd64)
 ```bash
-VERSION=0.9.0  # See https://github.com/yoanbernabeu/frankendeploy/releases/latest
+VERSION=0.10.0  # See https://github.com/yoanbernabeu/frankendeploy/releases/latest
 curl -LO https://github.com/yoanbernabeu/frankendeploy/releases/download/v${VERSION}/frankendeploy_${VERSION}_linux_amd64.tar.gz
 tar -xzf frankendeploy_${VERSION}_linux_amd64.tar.gz
 sudo mv frankendeploy /usr/local/bin/
@@ -42,7 +42,7 @@ sudo mv frankendeploy /usr/local/bin/
 
 ### macOS (Apple Silicon)
 ```bash
-VERSION=0.9.0  # See https://github.com/yoanbernabeu/frankendeploy/releases/latest
+VERSION=0.10.0  # See https://github.com/yoanbernabeu/frankendeploy/releases/latest
 curl -LO https://github.com/yoanbernabeu/frankendeploy/releases/download/v${VERSION}/frankendeploy_${VERSION}_darwin_arm64.tar.gz
 tar -xzf frankendeploy_${VERSION}_darwin_arm64.tar.gz
 sudo mv frankendeploy /usr/local/bin/
