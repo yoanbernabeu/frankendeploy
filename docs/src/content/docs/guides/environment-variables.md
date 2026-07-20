@@ -88,7 +88,7 @@ For Symfony applications, you typically need:
 |----------|-------------|
 | `APP_SECRET` | Symfony secret key (required) |
 | `APP_ENV` | Environment (auto-set to `prod`) |
-| `DATABASE_URL` | Database connection string |
+| `DATABASE_URL` | Database connection string — **injected automatically** with a managed database (`database.managed: true`); only set it for an external database |
 | `MAILER_DSN` | Email transport (optional) |
 
 ## Security Notes

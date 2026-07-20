@@ -17,7 +17,7 @@ name: my-app
 
 # PHP Configuration
 php:
-  # PHP version: 8.1, 8.2, 8.3, or 8.4
+  # PHP version: 8.2, 8.3, or 8.4 (FrankenPHP requires PHP >= 8.2)
   version: "8.3"
 
   # PHP extensions to install
@@ -89,7 +89,7 @@ deploy:
   # Domain for HTTPS (required for production)
   domain: my-app.com
 
-  # Health check endpoint (default: /)
+  # Health check endpoint (default: /, or /api when API Platform is detected)
   healthcheck_path: /health
 
   # Number of releases to keep (default: 5)
@@ -143,10 +143,11 @@ name: my-app
 ### `php.version`
 
 Supported versions:
-- `8.1`
 - `8.2`
 - `8.3`
 - `8.4`
+
+FrankenPHP requires PHP >= 8.2. If your `composer.json` allows older versions (e.g. `>=8.1`), `init` floors the detected version at 8.2 and warns you.
 
 ### `php.extensions`
 

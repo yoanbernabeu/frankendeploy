@@ -23,16 +23,19 @@ FrankenDeploy wraps all this power into simple commands.
 
 ### Auto-detection
 FrankenDeploy analyzes your Symfony project and automatically detects:
-- PHP version from `composer.json`
+- PHP version from `composer.json` (8.2 minimum, required by FrankenPHP)
 - Required PHP extensions
 - Database driver (PostgreSQL, MySQL, SQLite)
 - Asset build tools (Webpack Encore, Vite, AssetMapper)
+- API Platform (sets the health check path to `/api`)
 
 ### Docker Generation
 Generates optimized Docker configuration:
 - Multi-stage Dockerfile with FrankenPHP
-- docker-compose.yaml for local development
+- compose.yaml for local development
 - Production-ready configuration
+
+Missing files are generated automatically at deploy time — customized files are never overwritten.
 
 ### One-Command Deployment
 ```bash
@@ -55,7 +58,7 @@ cd my-symfony-app
 # Initialize FrankenDeploy (with optional domain)
 frankendeploy init --domain my-app.com
 
-# Generate Docker files
+# Generate Docker files (optional — deploy does it for you)
 frankendeploy build
 
 # Start local development
@@ -66,7 +69,8 @@ frankendeploy server add production deploy@my-vps.com
 frankendeploy server setup production --email admin@example.com
 
 # Set environment variables for this app
-frankendeploy env set production DATABASE_URL="postgresql://..."
+# (DATABASE_URL is injected automatically with a managed database)
+frankendeploy env set production APP_SECRET="your-secret"
 
 # Deploy!
 frankendeploy deploy production --remote-build

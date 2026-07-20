@@ -11,7 +11,11 @@ Roll back to the previous release:
 frankendeploy rollback production
 ```
 
-This instantly switches traffic to the previous version.
+This switches traffic back to the previous release with the **same guarantees as a deployment**:
+- The rollback container gets the same shared directories, environment and managed `DATABASE_URL` as a regular deploy
+- A health check runs **before** the swap — if the old release is unhealthy, the rollback aborts and the current version keeps running
+- The swap itself is zero-downtime (same rename-based mechanism as deploy)
+- Messenger workers are rolled back to the same release
 
 ## Rollback to Specific Release
 
@@ -43,16 +47,16 @@ frankendeploy rollback production 20240114-180000
 
 ## Automatic Rollback
 
-FrankenDeploy automatically rolls back if:
+During a deployment, FrankenDeploy protects the running version if:
 
 1. **Health check fails** - The new container doesn't respond correctly
 2. **Container won't start** - Docker fails to start the container
 3. **Pre-deploy hooks fail** - Migration or other commands fail
 
-You'll see:
+In all these cases the new container is removed and the **old container keeps serving traffic untouched** — there is nothing to restore because traffic never left the working version:
+
 ```
-⚠️ Health check failed, rolling back...
-✅ Rolled back to release 20240115-120000
+⚠️  Health check failed, rolling back...
 ```
 
 ## Managing Releases
