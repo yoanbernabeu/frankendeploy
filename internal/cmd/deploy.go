@@ -416,32 +416,48 @@ func prepareRelease(ctx context.Context, client ssh.Executor, cfg *config.Projec
 	return nil
 }
 
-// startNewContainer starts the new version with a temporary container name.
-// The old container remains running for zero-downtime deployment.
-func startNewContainer(ctx context.Context, client ssh.Executor, cfg *config.ProjectConfig, imageName, appPath, tag, databaseURL, containerName string) error {
+// buildAppRunCommand builds the docker run command for the application
+// container. It is the single source of truth shared by deploy, rollback and
+// env reload: same volume mounts, env vars, non-root user and restart policy.
+func buildAppRunCommand(cfg *config.ProjectConfig, imageName, appPath, databaseURL, containerName string) string {
 	sharedPath := filepath.Join(appPath, "shared")
 
-	sharedDirs := cfg.Deploy.EffectiveSharedDirs()
-	sharedFiles := cfg.Deploy.EffectiveSharedFiles()
-
-	volumeMounts := buildVolumeMounts(sharedPath, sharedDirs, sharedFiles)
+	volumeMounts := buildVolumeMounts(sharedPath, cfg.Deploy.EffectiveSharedDirs(), cfg.Deploy.EffectiveSharedFiles())
 
 	envVars := fmt.Sprintf("-e SERVER_NAME=:%s -e APP_ENV=prod -e APP_DEBUG=0", constants.AppPort)
 	if databaseURL != "" {
 		envVars += fmt.Sprintf(" -e DATABASE_URL=%s", security.ShellEscape(databaseURL))
 	}
 
-	// Remove any leftover temp container from a previous failed deploy
-	forceRemoveContainer(ctx, client, containerName)
-
 	// SECURITY: Run as non-root user with non-privileged port
-	dockerRunCmd := fmt.Sprintf(`docker run -d --name %s \
+	return fmt.Sprintf(`docker run -d --name %s \
 		--network %s \
 		--restart unless-stopped \
 		--user %s \
 		%s \
 		%s \
 		%s`, containerName, constants.NetworkName, constants.ContainerUser, envVars, volumeMounts, imageName)
+}
+
+// readSavedDatabaseURL reads the DATABASE_URL persisted by a managed-database
+// deploy (shared/.db_credentials). Returns "" when no managed database is
+// configured or the file cannot be read.
+func readSavedDatabaseURL(ctx context.Context, client ssh.Executor, appPath string) string {
+	credentialsFile := filepath.Join(appPath, "shared", ".db_credentials")
+	result, err := client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null", credentialsFile))
+	if err != nil || result == nil || result.ExitCode != 0 {
+		return ""
+	}
+	return strings.TrimSpace(result.Stdout)
+}
+
+// startNewContainer starts the new version with a temporary container name.
+// The old container remains running for zero-downtime deployment.
+func startNewContainer(ctx context.Context, client ssh.Executor, cfg *config.ProjectConfig, imageName, appPath, tag, databaseURL, containerName string) error {
+	// Remove any leftover temp container from a previous failed deploy
+	forceRemoveContainer(ctx, client, containerName)
+
+	dockerRunCmd := buildAppRunCommand(cfg, imageName, appPath, databaseURL, containerName)
 
 	PrintVerboseCommand(dockerRunCmd)
 	result, err := client.Exec(ctx, dockerRunCmd)
@@ -463,6 +479,37 @@ func startNewContainer(ctx context.Context, client ssh.Executor, cfg *config.Pro
 func swapContainers(ctx context.Context, client ssh.Executor, appName, appPath, tag, tempContainerName string, oldExists bool) error {
 	releasePath := filepath.Join(appPath, "releases", tag)
 	currentPath := filepath.Join(appPath, "current")
+
+	if err := swapContainerNames(ctx, client, appName, tempContainerName, oldExists); err != nil {
+		return err
+	}
+
+	// Update current symlink (critical step — surface any non-zero exit code)
+	symlinkResult, err := client.Exec(ctx, fmt.Sprintf("ln -sfn %s %s", releasePath, currentPath))
+	if err != nil {
+		return fmt.Errorf("failed to update symlink: %w", err)
+	}
+	if err := symlinkResult.Err(); err != nil {
+		return fmt.Errorf("failed to update symlink: %w", err)
+	}
+
+	// Save release marker (best-effort)
+	releaseResult, err := client.Exec(ctx, fmt.Sprintf("echo '%s' > %s/release", tag, releasePath))
+	if err != nil {
+		PrintVerbose("Could not write release file: %v", err)
+	} else if err := releaseResult.Err(); err != nil {
+		PrintVerbose("Could not write release file: %v", err)
+	}
+
+	return nil
+}
+
+// swapContainerNames hands the app name over from the old container to the
+// new one without downtime: the old container is renamed away while still
+// running, the new one takes the name (two instant renames), and only then is
+// the old one stopped. If taking over the name fails, the old container is
+// renamed back so the site keeps being served.
+func swapContainerNames(ctx context.Context, client ssh.Executor, appName, tempContainerName string, oldExists bool) error {
 	oldName := appName + "-old"
 
 	// Remove any stale -old leftover from a previously interrupted swap
@@ -504,23 +551,6 @@ func swapContainers(ctx context.Context, client ssh.Executor, appName, appPath, 
 	// Stopping the old one is best-effort cleanup.
 	if oldExists {
 		stopAndRemoveContainer(ctx, client, oldName)
-	}
-
-	// Update current symlink (critical step — surface any non-zero exit code)
-	symlinkResult, err := client.Exec(ctx, fmt.Sprintf("ln -sfn %s %s", releasePath, currentPath))
-	if err != nil {
-		return fmt.Errorf("failed to update symlink: %w", err)
-	}
-	if err := symlinkResult.Err(); err != nil {
-		return fmt.Errorf("failed to update symlink: %w", err)
-	}
-
-	// Save release marker (best-effort)
-	releaseResult, err := client.Exec(ctx, fmt.Sprintf("echo '%s' > %s/release", tag, releasePath))
-	if err != nil {
-		PrintVerbose("Could not write release file: %v", err)
-	} else if err := releaseResult.Err(); err != nil {
-		PrintVerbose("Could not write release file: %v", err)
 	}
 
 	return nil
