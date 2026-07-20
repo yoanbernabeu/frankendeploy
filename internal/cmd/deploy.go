@@ -117,6 +117,13 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		PrintSuccess("Pre-flight checks passed")
 	}
 
+	// Step 2: Ensure Docker artifacts exist (novice flow: init → deploy without build)
+	if deployRemoteBuild || !deployNoBuild {
+		if err := ensureDockerArtifacts(projectCfg); err != nil {
+			return err
+		}
+	}
+
 	if deployRemoteBuild {
 		// Remote build: transfer source code and build on server
 		PrintInfo("Transferring source code to server...")
