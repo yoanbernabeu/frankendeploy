@@ -31,7 +31,7 @@ func (s *Scanner) DetectAssets() (*config.AssetsConfig, error) {
 	packageJSON, err := s.parsePackageJSON()
 	if err != nil {
 		// No package.json, no frontend build
-		return nil, nil
+		return assetsConfig, nil
 	}
 
 	// Detect build tool
@@ -57,7 +57,8 @@ func (s *Scanner) DetectAssets() (*config.AssetsConfig, error) {
 		return assetsConfig, nil
 	}
 
-	return nil, nil
+	// package.json exists but has no build script: no frontend build
+	return assetsConfig, nil
 }
 
 // parsePackageJSON parses the package.json file
