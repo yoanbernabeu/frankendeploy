@@ -61,7 +61,7 @@ func ValidateProjectConfig(config *ProjectConfig) ValidationErrors {
 	} else if !isValidPHPVersion(config.PHP.Version) {
 		errors = append(errors, ValidationError{
 			Field:   "php.version",
-			Message: "invalid PHP version (must be 8.1, 8.2, 8.3, or 8.4)",
+			Message: "invalid PHP version (must be 8.2 or higher — FrankenPHP requires PHP >= 8.2)",
 		})
 	}
 
@@ -175,10 +175,12 @@ func isValidProjectName(name string) bool {
 	return matched
 }
 
-// phpVersionRegex matches PHP versions of the form "8.x" where x ≥ 1.
+// phpVersionRegex matches PHP versions of the form "8.x" where x ≥ 2, the
+// minimum version with an official FrankenPHP image (dunglas/frankenphp
+// requires PHP >= 8.2 — there is no php8.1 tag).
 // Kept forward-compatible so new PHP releases (8.10, 8.20, …) don't require
 // a config/validator update before they can be used.
-var phpVersionRegex = regexp.MustCompile(`^8\.[1-9]\d*$`)
+var phpVersionRegex = regexp.MustCompile(`^8\.([2-9]|[1-9]\d)$`)
 
 // IsValidPHPVersion reports whether the given version is an accepted PHP version.
 // This is the single source of truth used by both the config and generator layers.

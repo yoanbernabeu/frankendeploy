@@ -40,6 +40,9 @@ func (s *Scanner) Scan() (*config.ScanResult, error) {
 	result.PHPVersion = composer.PHPVersion
 	result.PHPExtensions = composer.Extensions
 	result.Framework = "symfony"
+	if composer.PHPVersionWarning != "" {
+		result.Warnings = append(result.Warnings, composer.PHPVersionWarning)
+	}
 
 	// Detect database
 	dbConfig, dbWarning, err := s.DetectDatabase()
