@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-07-20
+
+### Fixed
+
+- **Generator Validation**: Close validation gaps for heredoc injection, env keys, and Docker image tags (#30) - @yoanbernabeu
+
+### Changed
+
+- **Deploy Connection**: Use `ConnectToServer()` instead of manual connection setup (#31) - @yoanbernabeu
+- **Constants**: Replace hardcoded paths and ports with constants (#32) - @yoanbernabeu
+- **Managed Databases**: Use `dbDriverRegistry` in `deployManagedDatabase` (#33) - @yoanbernabeu
+- **Health Checks**: Wire `HealthChecker` into the deploy path (#34) - @yoanbernabeu
+- **SSH Testability**: Accept `ssh.Executor` interface instead of `*ssh.Client` in deploy (#35) - @yoanbernabeu
+- **Dead Code Cleanup**: Remove dead code and fix env/key detection quirks (#36) - @yoanbernabeu
+- **Validation Unification**: Unify validation and remove dead code across scanner/config/generator (#37) - @yoanbernabeu
+- **Template Data Flow**: Close template data-flow gaps (#38) - @yoanbernabeu
+
 ## [0.8.0] - 2026-02-14
 
 ### Changed
@@ -62,7 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial public release with core deployment features.
 
-[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.5.0...v0.6.0
