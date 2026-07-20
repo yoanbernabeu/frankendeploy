@@ -65,6 +65,13 @@ func LoadProjectConfig(path string) (*ProjectConfig, error) {
 		}
 	}
 
+	// Validate shared files: they are interpolated into remote shell commands
+	for _, file := range config.Deploy.SharedFiles {
+		if err := security.ValidateSharedFile(file); err != nil {
+			return nil, fmt.Errorf("invalid shared_file %q: %w", file, err)
+		}
+	}
+
 	return &config, nil
 }
 

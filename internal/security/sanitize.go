@@ -243,23 +243,36 @@ func ValidateHook(hook string) error {
 // ValidateSharedDir validates a shared directory path.
 // Shared dirs must be relative paths without parent traversal.
 func ValidateSharedDir(dir string) error {
-	if dir == "" {
-		return fmt.Errorf("shared directory cannot be empty")
+	return validateSharedPath(dir, "shared directory")
+}
+
+// ValidateSharedFile validates a shared file path.
+// Shared files must be relative paths without parent traversal: they are
+// interpolated into remote shell commands (touch, mkdir, docker -v mounts),
+// so the same restrictions as shared dirs apply.
+func ValidateSharedFile(file string) error {
+	return validateSharedPath(file, "shared file")
+}
+
+// validateSharedPath applies the common rules for shared dirs and files.
+func validateSharedPath(path, label string) error {
+	if path == "" {
+		return fmt.Errorf("%s cannot be empty", label)
 	}
 
 	// Must be relative (no leading /)
-	if strings.HasPrefix(dir, "/") {
-		return fmt.Errorf("shared directory must be a relative path, got: %s", dir)
+	if strings.HasPrefix(path, "/") {
+		return fmt.Errorf("%s must be a relative path, got: %s", label, path)
 	}
 
 	// No parent traversal
-	if strings.Contains(dir, "..") {
-		return fmt.Errorf("shared directory cannot contain path traversal (..): %s", dir)
+	if strings.Contains(path, "..") {
+		return fmt.Errorf("%s cannot contain path traversal (..): %s", label, path)
 	}
 
 	// Only safe characters
-	if !sharedDirRegex.MatchString(dir) {
-		return fmt.Errorf("shared directory contains invalid characters: %s", dir)
+	if !sharedDirRegex.MatchString(path) {
+		return fmt.Errorf("%s contains invalid characters: %s", label, path)
 	}
 
 	return nil
