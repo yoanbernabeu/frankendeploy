@@ -260,9 +260,17 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Step 10: Update Caddy config
+	// Step 10: Update Caddy config. On the app's FIRST public exposure this is
+	// THE condition for reachability: failing must fail the deploy instead of
+	// printing a success message with an unreachable https URL. On later
+	// deploys the existing Caddy config still routes to the swapped container,
+	// so a reload failure only warrants a warning.
+	firstExposure := projectCfg.Deploy.Domain != "" && !caddyAppConfigExists(ctx, client, projectCfg.Name)
 	PrintInfo("Updating reverse proxy...")
 	if err := updateCaddyConfig(ctx, client, projectCfg); err != nil {
+		if firstExposure {
+			return fmt.Errorf("reverse proxy configuration failed — the application is running on the server but NOT publicly reachable: %w", err)
+		}
 		PrintWarning("Failed to update Caddy: %v", err)
 	}
 
@@ -743,6 +751,13 @@ func fixSharedPermissions(ctx context.Context, client ssh.Executor, sharedPath s
 	}
 }
 
+// caddyAppConfigExists reports whether the app already has a Caddy config on
+// the server — i.e. whether it has ever been publicly exposed.
+func caddyAppConfigExists(ctx context.Context, client ssh.Executor, appName string) bool {
+	result, err := client.Exec(ctx, fmt.Sprintf("test -f %s && echo yes", constants.CaddyAppConfig(appName)))
+	return err == nil && result != nil && strings.TrimSpace(result.Stdout) == "yes"
+}
+
 func updateCaddyConfig(ctx context.Context, client ssh.Executor, cfg *config.ProjectConfig) error {
 	domain := cfg.Deploy.Domain
 	if domain == "" {
@@ -756,6 +771,19 @@ func updateCaddyConfig(ctx context.Context, client ssh.Executor, cfg *config.Pro
 		PrintInfo("Or run: frankendeploy init --domain your-domain.com")
 		fmt.Println()
 		return nil
+	}
+
+	// The reload runs inside the caddy container: verify it is up first so the
+	// user gets a clear diagnosis instead of an obscure docker exec failure.
+	statusResult, err := client.Exec(ctx, "docker inspect caddy --format '{{.State.Status}}' 2>/dev/null")
+	if err != nil {
+		return fmt.Errorf("could not check Caddy container status: %w", err)
+	}
+	if status := strings.TrimSpace(statusResult.Stdout); status != "running" {
+		if status == "" {
+			status = "not found"
+		}
+		return fmt.Errorf("caddy container is not running on the server (status: %s) — run 'frankendeploy server setup' first", status)
 	}
 
 	// Generate Caddy config using our generator

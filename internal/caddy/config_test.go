@@ -94,3 +94,58 @@ func TestAppConfigFromProject_CopiesHealthcheckPath(t *testing.T) {
 		t.Errorf("expected HealthPath /api, got %q", app.HealthPath)
 	}
 }
+
+func TestReloadCommands(t *testing.T) {
+	cmds := ReloadCommands()
+	if len(cmds) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(cmds))
+	}
+	if !strings.Contains(cmds[0], "docker exec caddy caddy reload") {
+		t.Errorf("expected caddy reload command, got: %s", cmds[0])
+	}
+	if !strings.Contains(cmds[0], "--config /etc/caddy/Caddyfile") {
+		t.Errorf("reload must target the main Caddyfile, got: %s", cmds[0])
+	}
+}
+
+func TestWriteAppConfigCommands(t *testing.T) {
+	content := "example.com {\n    reverse_proxy myapp:80\n}\n"
+	cmds, err := WriteAppConfigCommands("myapp", content)
+	if err != nil {
+		t.Fatalf("WriteAppConfigCommands: %v", err)
+	}
+	if len(cmds) != 3 {
+		t.Fatalf("expected 3 commands (mkdir, write, reload), got %d", len(cmds))
+	}
+	if !strings.HasPrefix(cmds[0], "mkdir -p ") {
+		t.Errorf("first command should create the apps dir, got: %s", cmds[0])
+	}
+	if !strings.Contains(cmds[1], "myapp.caddy") || !strings.Contains(cmds[1], content) {
+		t.Errorf("second command should write the app config content, got: %s", cmds[1])
+	}
+	if !strings.Contains(cmds[2], "caddy reload") {
+		t.Errorf("third command should reload Caddy, got: %s", cmds[2])
+	}
+
+	// Heredoc delimiter must be random: two calls must differ
+	cmds2, err := WriteAppConfigCommands("myapp", content)
+	if err != nil {
+		t.Fatalf("WriteAppConfigCommands: %v", err)
+	}
+	if cmds[1] == cmds2[1] {
+		t.Error("heredoc delimiter should be randomized between calls")
+	}
+}
+
+func TestRemoveAppConfigCommands(t *testing.T) {
+	cmds := RemoveAppConfigCommands("myapp")
+	if len(cmds) != 2 {
+		t.Fatalf("expected 2 commands (rm, reload), got %d", len(cmds))
+	}
+	if !strings.Contains(cmds[0], "rm -f") || !strings.Contains(cmds[0], "myapp.caddy") {
+		t.Errorf("first command should remove the app config, got: %s", cmds[0])
+	}
+	if !strings.Contains(cmds[1], "caddy reload") {
+		t.Errorf("second command should reload Caddy, got: %s", cmds[1])
+	}
+}
