@@ -52,7 +52,7 @@ func (s *Scanner) Scan() (*config.ScanResult, error) {
 
 	// Detect assets
 	assetsConfig, err := s.DetectAssets()
-	if err == nil {
+	if err == nil && assetsConfig != nil {
 		result.Assets = *assetsConfig
 	}
 
