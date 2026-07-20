@@ -150,6 +150,7 @@ func runRollback(cmd *cobra.Command, args []string) error {
 	// Health check the rollback container before touching the live one
 	PrintInfo("Running health check...")
 	if err := runHealthCheckOnContainer(ctx, client, cfg, tempName); err != nil {
+		showContainerLogs(ctx, client, tempName)
 		forceRemoveContainer(ctx, client, tempName)
 		return fmt.Errorf("rollback aborted, current version untouched: %w", err)
 	}

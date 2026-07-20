@@ -73,10 +73,16 @@ type DeployConfig struct {
 	Domain          string   `yaml:"domain,omitempty"`
 	HealthcheckPath string   `yaml:"healthcheck_path,omitempty"`
 	HealthcheckHost string   `yaml:"healthcheck_host,omitempty"`
-	KeepReleases    int      `yaml:"keep_releases,omitempty"`
-	SharedFiles     []string `yaml:"shared_files,omitempty"`
-	SharedDirs      []string `yaml:"shared_dirs,omitempty"`
-	Hooks           Hooks    `yaml:"hooks,omitempty"`
+	// HealthcheckTimeout is the overall health check window in seconds (0 = default).
+	HealthcheckTimeout int `yaml:"healthcheck_timeout,omitempty"`
+	// HealthcheckRetries is the maximum number of attempts (0 = default).
+	HealthcheckRetries int `yaml:"healthcheck_retries,omitempty"`
+	// HealthcheckInterval is the wait between attempts in seconds (0 = default).
+	HealthcheckInterval int      `yaml:"healthcheck_interval,omitempty"`
+	KeepReleases        int      `yaml:"keep_releases,omitempty"`
+	SharedFiles         []string `yaml:"shared_files,omitempty"`
+	SharedDirs          []string `yaml:"shared_dirs,omitempty"`
+	Hooks               Hooks    `yaml:"hooks,omitempty"`
 }
 
 // Hooks holds deployment hook commands

@@ -400,3 +400,40 @@ func TestRunHealthCheckOnContainer_RejectsInvalidHealthPath(t *testing.T) {
 		t.Errorf("runHealthCheckOnContainer() should not execute any command on invalid path, got: %v", mock.Commands)
 	}
 }
+
+func TestRunHealthCheckOnContainer_UsesConfiguredRetries(t *testing.T) {
+	oldDelay := preHealthDelay
+	preHealthDelay = 0
+	defer func() { preHealthDelay = oldDelay }()
+
+	curlAttempts := 0
+	mock := &ssh.MockExecutor{
+		ExecFunc: func(ctx context.Context, command string) (*ssh.ExecResult, error) {
+			if strings.Contains(command, "docker inspect") {
+				return &ssh.ExecResult{Stdout: "running", ExitCode: 0}, nil
+			}
+			if strings.Contains(command, "curl") {
+				curlAttempts++
+				return &ssh.ExecResult{Stdout: "500", ExitCode: 1}, nil
+			}
+			return &ssh.ExecResult{}, nil
+		},
+	}
+
+	cfg := &config.ProjectConfig{
+		Name: "test-app",
+		Deploy: config.DeployConfig{
+			HealthcheckRetries:  2,
+			HealthcheckInterval: 1,
+			HealthcheckTimeout:  30,
+		},
+	}
+
+	err := runHealthCheckOnContainer(context.Background(), mock, cfg, "test-app-new")
+	if err == nil {
+		t.Fatal("expected health check failure")
+	}
+	if curlAttempts != 2 {
+		t.Errorf("expected 2 attempts from config, got %d", curlAttempts)
+	}
+}

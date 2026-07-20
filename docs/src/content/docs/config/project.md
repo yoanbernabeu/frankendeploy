@@ -92,6 +92,11 @@ deploy:
   # Health check endpoint (default: /, or /api when API Platform is detected)
   healthcheck_path: /health
 
+  # Health check tuning (optional, 0 or omitted = defaults)
+  healthcheck_timeout: 90    # overall window in seconds (default: 90)
+  healthcheck_retries: 30    # max attempts (default: 30)
+  healthcheck_interval: 3    # seconds between attempts (default: 3)
+
   # Number of releases to keep (default: 5)
   keep_releases: 5
 

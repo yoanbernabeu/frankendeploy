@@ -41,17 +41,21 @@ CI/CD: If no server is specified, FRANKENDEPLOY_SERVER environment variable is u
 }
 
 var (
-	deployTag           string
-	deployForce         bool
-	deployNoBuild       bool
-	deployRemoteBuild   bool
-	deployNoRemoteBuild bool
+	deployTag             string
+	deployForce           bool
+	deployNoBuild         bool
+	deployRemoteBuild     bool
+	deployNoRemoteBuild   bool
+	deploySkipEnvCheck    bool
+	deploySkipHealthcheck bool
 )
 
 func init() {
 	rootCmd.AddCommand(deployCmd)
 	deployCmd.Flags().StringVarP(&deployTag, "tag", "t", "", "Image tag (default: timestamp)")
-	deployCmd.Flags().BoolVarP(&deployForce, "force", "f", false, "Force deployment even if checks fail")
+	deployCmd.Flags().BoolVarP(&deployForce, "force", "f", false, "Skip env pre-flight and continue on hook or health check failures")
+	deployCmd.Flags().BoolVar(&deploySkipEnvCheck, "skip-env-check", false, "Skip the pre-flight environment variables check")
+	deployCmd.Flags().BoolVar(&deploySkipHealthcheck, "skip-healthcheck", false, "Skip the health check on the new container (traffic switches unverified)")
 	deployCmd.Flags().BoolVar(&deployNoBuild, "no-build", false, "Skip image build (use existing image)")
 	deployCmd.Flags().BoolVar(&deployRemoteBuild, "remote-build", false, "Build image on the server (recommended for cross-architecture)")
 	deployCmd.Flags().BoolVar(&deployNoRemoteBuild, "no-remote-build", false, "Force local build (ignore saved preference)")
@@ -109,7 +113,9 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 1b: Pre-flight environment check
-	if !deployForce {
+	if deployForce || deploySkipEnvCheck {
+		PrintWarning("Pre-flight environment check skipped (%s)", skipFlagName(deploySkipEnvCheck, "--skip-env-check"))
+	} else {
 		PrintInfo("Running pre-flight checks...")
 		if err := runEnvPreflightCheck(ctx, client, projectCfg, serverName); err != nil {
 			return err
@@ -209,17 +215,23 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 7: Health check on the NEW container (old still running = zero downtime)
-	PrintInfo("Running health check...")
-	state.Phase = deploy.PhaseHealthCheck
-	if err := runHealthCheckOnContainer(ctx, client, projectCfg, state.TempContainerName); err != nil {
-		if !deployForce {
-			PrintWarning("Health check failed, rolling back...")
-			rollbackNewContainer(ctx, client, state)
-			return fmt.Errorf("deployment failed health check: %w", err)
+	if deploySkipHealthcheck {
+		PrintWarning("Health check skipped (--skip-healthcheck)")
+	} else {
+		PrintInfo("Running health check...")
+		state.Phase = deploy.PhaseHealthCheck
+		if err := runHealthCheckOnContainer(ctx, client, projectCfg, state.TempContainerName); err != nil {
+			showContainerLogs(ctx, client, state.TempContainerName)
+			if !deployForce {
+				PrintWarning("Health check failed, rolling back...")
+				rollbackNewContainer(ctx, client, state)
+				return fmt.Errorf("deployment failed health check: %w", err)
+			}
+			PrintWarning("Health check failed but continuing (--force)")
+		} else {
+			PrintSuccess("Health check passed")
 		}
-		PrintWarning("Health check failed but continuing (--force)")
 	}
-	PrintSuccess("Health check passed")
 
 	// Step 8: Swap containers (rename old away, rename new → final, stop old, update symlink)
 	PrintInfo("Swapping containers...")
@@ -596,6 +608,37 @@ func rollbackNewContainer(ctx context.Context, client ssh.Executor, state *deplo
 	}
 }
 
+// containerLogTailLines is how many log lines are shown when a health check fails.
+const containerLogTailLines = 50
+
+// preHealthDelay is a variable so tests can skip the wait.
+var preHealthDelay = constants.PreHealthSleep
+
+// skipFlagName returns the flag responsible for skipping a check, for honest messages.
+func skipFlagName(skipFlagSet bool, skipFlag string) string {
+	if skipFlagSet {
+		return skipFlag
+	}
+	return "--force"
+}
+
+// showContainerLogs prints the last log lines of a container so the user can
+// see why a health check failed before the container is removed by rollback.
+func showContainerLogs(ctx context.Context, client ssh.Executor, containerName string) {
+	logs, err := deploy.ContainerLogs(ctx, client, containerName, containerLogTailLines)
+	if err != nil {
+		PrintWarning("Could not retrieve container logs: %v", err)
+		return
+	}
+	if strings.TrimSpace(logs) == "" {
+		PrintWarning("Container %s produced no logs", containerName)
+		return
+	}
+	fmt.Println()
+	PrintInfo("Last %d log lines from %s:", containerLogTailLines, containerName)
+	fmt.Println(logs)
+}
+
 // runHealthCheckOnContainer runs a health check against a specific container name
 // using the centralized HealthChecker with retries, timeout, and proper status code parsing.
 func runHealthCheckOnContainer(ctx context.Context, client ssh.Executor, cfg *config.ProjectConfig, containerName string) error {
@@ -609,9 +652,19 @@ func runHealthCheckOnContainer(ctx context.Context, client ssh.Executor, cfg *co
 	}
 
 	// Wait for container to be ready before health checks
-	time.Sleep(constants.PreHealthSleep)
+	time.Sleep(preHealthDelay)
 
 	hc := deploy.NewHealthChecker(client, containerName, healthPath, constants.AppPort)
+	if cfg.Deploy.HealthcheckTimeout > 0 {
+		hc.SetTimeout(time.Duration(cfg.Deploy.HealthcheckTimeout) * time.Second)
+	}
+	if cfg.Deploy.HealthcheckRetries > 0 {
+		hc.SetRetries(cfg.Deploy.HealthcheckRetries)
+	}
+	if cfg.Deploy.HealthcheckInterval > 0 {
+		hc.SetInterval(time.Duration(cfg.Deploy.HealthcheckInterval) * time.Second)
+	}
+
 	result, err := hc.Check(ctx)
 	if err != nil {
 		return fmt.Errorf("health check error: %w", err)

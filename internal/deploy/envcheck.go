@@ -49,7 +49,10 @@ func CheckEnvVars(ctx context.Context, client ssh.Executor, cfg *config.ProjectC
 	envFile := constants.AppEnvFilePath(cfg.Name)
 
 	// Read existing env variables
-	execResult, _ := client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
+	execResult, err := client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read env file: %w", err)
+	}
 	existingVars := parseEnvContent(execResult.Stdout)
 
 	// Get framework requirements (default to Symfony)
@@ -150,7 +153,10 @@ func SaveGeneratedSecrets(ctx context.Context, client ssh.Executor, appName stri
 	}
 
 	// Read existing env file
-	result, _ := client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
+	result, err := client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
+	if err != nil {
+		return fmt.Errorf("failed to read env file: %w", err)
+	}
 	existingVars := parseEnvContent(result.Stdout)
 
 	// Merge new secrets

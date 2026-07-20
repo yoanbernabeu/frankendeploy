@@ -142,7 +142,10 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 	}
 
 	// Read existing env file
-	result, _ := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
+	result, err := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
+	if err != nil {
+		return fmt.Errorf("failed to read env file: %w", err)
+	}
 	existingContent := result.Stdout
 
 	// Parse existing variables
@@ -230,7 +233,10 @@ func runEnvGet(cmd *cobra.Command, args []string) error {
 
 	envFile := constants.AppEnvFilePath(conn.Project.Name)
 
-	result, _ := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null", envFile))
+	result, err := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null", envFile))
+	if err != nil {
+		return fmt.Errorf("failed to read env file: %w", err)
+	}
 	envVars := parseEnvContent(result.Stdout)
 
 	if value, ok := envVars[key]; ok {
@@ -260,7 +266,10 @@ func runEnvRemove(cmd *cobra.Command, args []string) error {
 
 	envFile := constants.AppEnvFilePath(conn.Project.Name)
 
-	result, _ := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null", envFile))
+	result, err := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null", envFile))
+	if err != nil {
+		return fmt.Errorf("failed to read env file: %w", err)
+	}
 	envVars := parseEnvContent(result.Stdout)
 
 	if _, ok := envVars[key]; !ok {
@@ -328,7 +337,10 @@ func runEnvPush(cmd *cobra.Command, args []string) error {
 	}
 
 	// Read existing and merge
-	result, _ := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
+	result, err := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
+	if err != nil {
+		return fmt.Errorf("failed to read env file: %w", err)
+	}
 	existingVars := parseEnvContent(result.Stdout)
 	newVars := parseEnvContent(string(content))
 

@@ -25,10 +25,13 @@ const (
 
 // Health check defaults
 const (
-	PreHealthSleep     = 5 * time.Second
-	HealthCheckTimeout = 30 * time.Second
-	HealthCheckRetries = 5
-	HealthCheckInterval = 2 * time.Second
+	// The generated Dockerfile declares HEALTHCHECK --start-period=60s: a cold
+	// Symfony container (opcache warmup, DB wait, first-request compile) can
+	// legitimately need that long, so the deploy-side window must cover it.
+	PreHealthSleep      = 5 * time.Second
+	HealthCheckTimeout  = 90 * time.Second
+	HealthCheckRetries  = 30
+	HealthCheckInterval = 3 * time.Second
 )
 
 // Deployment defaults

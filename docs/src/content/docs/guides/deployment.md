@@ -82,8 +82,17 @@ If you've already built the image:
 frankendeploy deploy production --no-build
 ```
 
+### Skip Individual Checks
+```bash
+# Skip the pre-flight environment variables check
+frankendeploy deploy production --skip-env-check
+
+# Skip the health check entirely (traffic switches unverified)
+frankendeploy deploy production --skip-healthcheck
+```
+
 ### Force Deploy
-Skip health check failures:
+`--force` skips the env pre-flight and continues even when pre-deploy hooks (e.g. migrations) or the health check fail — use with care:
 ```bash
 frankendeploy deploy production --force
 ```
@@ -99,6 +108,17 @@ deploy:
 ```
 
 The default path is `/`. For **API Platform** projects, `init` detects the framework and sets the path to `/api` automatically — a pure API returns 404 on `/`, which would fail every health check. The same path is also used by Caddy's active health checks on the running container.
+
+The check window is generous by default (90 seconds — a cold Symfony container needs time for opcache warmup and database wait) and tunable:
+
+```yaml
+deploy:
+  healthcheck_timeout: 90    # overall window in seconds
+  healthcheck_retries: 30    # max attempts
+  healthcheck_interval: 3    # seconds between attempts
+```
+
+When the health check fails, FrankenDeploy prints the **last 50 log lines of the failing container** before removing it, so you immediately see the real cause (missing env variable, failed migration, PHP fatal…).
 
 Create a health endpoint in your Symfony app:
 
