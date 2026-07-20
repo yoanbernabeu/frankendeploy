@@ -153,31 +153,113 @@ func TestHealthChecker_Check_PortInCurlCommand(t *testing.T) {
 	}
 }
 
-func TestHealthChecker_CheckContainer(t *testing.T) {
-	tests := []struct {
-		name     string
-		stdout   string
-		expected bool
-	}{
-		{"running container", "Up 5 minutes", true},
-		{"stopped container", "", false},
+func TestContainerLogs(t *testing.T) {
+	mock := &ssh.MockExecutor{
+		ExecFunc: func(ctx context.Context, command string) (*ssh.ExecResult, error) {
+			if !strings.Contains(command, "docker logs test-app --tail 50") {
+				t.Errorf("unexpected command: %s", command)
+			}
+			return &ssh.ExecResult{Stdout: "line1\nline2\n", ExitCode: 0}, nil
+		},
+	}
+	logs, err := ContainerLogs(context.Background(), mock, "test-app", 50)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if logs != "line1\nline2\n" {
+		t.Errorf("unexpected logs: %q", logs)
+	}
+}
+
+func TestHealthChecker_Check_SurvivesSSHDrop(t *testing.T) {
+	// Exec returning (nil, err) must not panic: treated as a failed attempt.
+	calls := 0
+	mock := &ssh.MockExecutor{
+		ExecFunc: func(ctx context.Context, command string) (*ssh.ExecResult, error) {
+			calls++
+			if calls == 1 {
+				return nil, fmt.Errorf("ssh connection dropped")
+			}
+			if strings.Contains(command, "docker inspect") {
+				return &ssh.ExecResult{Stdout: "running", ExitCode: 0}, nil
+			}
+			return &ssh.ExecResult{Stdout: "200", ExitCode: 0}, nil
+		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mock := &ssh.MockExecutor{
-				ExecFunc: func(ctx context.Context, command string) (*ssh.ExecResult, error) {
-					return &ssh.ExecResult{Stdout: tt.stdout, ExitCode: 0}, nil
-				},
+	hc := NewHealthChecker(mock, "test-app", "/", "8080")
+	hc.SetTimeout(5 * time.Second)
+	hc.SetRetries(3)
+	hc.SetInterval(50 * time.Millisecond)
+
+	result, err := hc.Check(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Healthy {
+		t.Errorf("expected healthy after SSH recovery, got: %s", result.Message)
+	}
+}
+
+func TestHealthChecker_Check_ContextCancelled(t *testing.T) {
+	mock := &ssh.MockExecutor{
+		ExecFunc: func(ctx context.Context, command string) (*ssh.ExecResult, error) {
+			if strings.Contains(command, "docker inspect") {
+				return &ssh.ExecResult{Stdout: "running", ExitCode: 0}, nil
 			}
-			hc := NewHealthChecker(mock, "test-app", "/", "8080")
-			running, err := hc.CheckContainer(context.Background())
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
+			return &ssh.ExecResult{Stdout: "503", ExitCode: 1}, nil
+		},
+	}
+
+	hc := NewHealthChecker(mock, "test-app", "/", "8080")
+	hc.SetTimeout(30 * time.Second)
+	hc.SetRetries(100)
+	hc.SetInterval(10 * time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	result, err := hc.Check(ctx)
+	if err == nil {
+		t.Fatal("expected context cancellation error")
+	}
+	if result.Healthy {
+		t.Error("expected unhealthy on cancellation")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("Check did not return promptly on cancellation (took %v)", elapsed)
+	}
+}
+
+func TestHealthChecker_Check_NoSleepAfterLastAttempt(t *testing.T) {
+	mock := &ssh.MockExecutor{
+		ExecFunc: func(ctx context.Context, command string) (*ssh.ExecResult, error) {
+			if strings.Contains(command, "docker inspect") {
+				return &ssh.ExecResult{Stdout: "running", ExitCode: 0}, nil
 			}
-			if running != tt.expected {
-				t.Errorf("expected running=%v, got %v", tt.expected, running)
-			}
-		})
+			return &ssh.ExecResult{Stdout: "500", ExitCode: 1}, nil
+		},
+	}
+
+	hc := NewHealthChecker(mock, "test-app", "/", "8080")
+	hc.SetTimeout(30 * time.Second)
+	hc.SetRetries(3)
+	hc.SetInterval(200 * time.Millisecond)
+
+	start := time.Now()
+	result, err := hc.Check(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Healthy {
+		t.Error("expected unhealthy")
+	}
+	// 3 attempts with only 2 sleeps: well under 3 full intervals.
+	if elapsed := time.Since(start); elapsed >= 600*time.Millisecond {
+		t.Errorf("expected no sleep after last attempt, took %v", elapsed)
 	}
 }

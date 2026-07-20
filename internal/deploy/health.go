@@ -74,14 +74,24 @@ func (h *HealthChecker) Check(ctx context.Context) (*HealthResult, error) {
 			return result, nil
 		}
 
-		// Check if container is running
-		containerCheck, _ := h.client.Exec(ctx, fmt.Sprintf(
+		// Check if container is running. A transient SSH error counts as a
+		// failed attempt (the connection may recover), never as a panic.
+		containerCheck, err := h.client.Exec(ctx, fmt.Sprintf(
 			"docker inspect %s --format '{{.State.Status}}'", h.containerID))
+		if err != nil || containerCheck == nil {
+			result.Message = fmt.Sprintf("container status check failed: %v", err)
+			if err := h.sleepBetweenAttempts(ctx, attempt, result); err != nil {
+				return result, err
+			}
+			continue
+		}
 
 		containerStatus := strings.TrimSpace(containerCheck.Stdout)
 		if containerStatus != "running" {
 			result.Message = fmt.Sprintf("container not running (status: %s)", containerStatus)
-			time.Sleep(h.interval)
+			if err := h.sleepBetweenAttempts(ctx, attempt, result); err != nil {
+				return result, err
+			}
 			continue
 		}
 
@@ -94,7 +104,7 @@ func (h *HealthChecker) Check(ctx context.Context) (*HealthResult, error) {
 		httpCheck, err := h.client.Exec(ctx, healthCmd)
 		result.ResponseTime = time.Since(start)
 
-		if err == nil && httpCheck.ExitCode == 0 {
+		if err == nil && httpCheck != nil && httpCheck.ExitCode == 0 {
 			result.Healthy = true
 			result.StatusCode = 200 // default if parsing fails
 			if httpCheck.Stdout != "" {
@@ -108,6 +118,7 @@ func (h *HealthChecker) Check(ctx context.Context) (*HealthResult, error) {
 		}
 
 		// Parse status code from output
+		result.StatusCode = 0
 		if httpCheck != nil && httpCheck.Stdout != "" {
 			if n, scanErr := fmt.Sscanf(httpCheck.Stdout, "%d", &result.StatusCode); n == 0 || scanErr != nil {
 				result.StatusCode = 0
@@ -115,54 +126,40 @@ func (h *HealthChecker) Check(ctx context.Context) (*HealthResult, error) {
 		}
 
 		result.Message = fmt.Sprintf("HTTP check failed (status: %d)", result.StatusCode)
-		time.Sleep(h.interval)
+		if err := h.sleepBetweenAttempts(ctx, attempt, result); err != nil {
+			return result, err
+		}
 	}
 
 	return result, nil
 }
 
-// CheckContainer verifies if a container is running
-func (h *HealthChecker) CheckContainer(ctx context.Context) (bool, error) {
-	result, err := h.client.Exec(ctx, fmt.Sprintf(
-		"docker ps --filter name=%s --format '{{.Status}}'", h.containerID))
-
-	if err != nil {
-		return false, err
+// sleepBetweenAttempts waits for the retry interval, honoring context
+// cancellation, and skips the pointless sleep after the last attempt.
+func (h *HealthChecker) sleepBetweenAttempts(ctx context.Context, attempt int, result *HealthResult) error {
+	if attempt >= h.retries {
+		return nil
 	}
-
-	return result.Stdout != "", nil
+	select {
+	case <-ctx.Done():
+		result.Message = "health check cancelled"
+		return ctx.Err()
+	case <-time.After(h.interval):
+		return nil
+	}
 }
 
-// GetContainerLogs retrieves recent container logs
-func (h *HealthChecker) GetContainerLogs(ctx context.Context, lines int) (string, error) {
-	result, err := h.client.Exec(ctx, fmt.Sprintf(
-		"docker logs %s --tail %d 2>&1", h.containerID, lines))
+// ContainerLogs retrieves recent container logs (stdout and stderr merged)
+func ContainerLogs(ctx context.Context, client ssh.Executor, containerID string, lines int) (string, error) {
+	result, err := client.Exec(ctx, fmt.Sprintf(
+		"docker logs %s --tail %d 2>&1", containerID, lines))
 
 	if err != nil {
 		return "", err
 	}
+	if result == nil {
+		return "", fmt.Errorf("no output from docker logs")
+	}
 
 	return result.Stdout, nil
-}
-
-// WaitForContainer waits for a container to be in running state
-func (h *HealthChecker) WaitForContainer(ctx context.Context, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-
-	for {
-		if time.Now().After(deadline) {
-			return fmt.Errorf("timeout waiting for container to start")
-		}
-
-		running, err := h.CheckContainer(ctx)
-		if err != nil {
-			return err
-		}
-
-		if running {
-			return nil
-		}
-
-		time.Sleep(500 * time.Millisecond)
-	}
 }

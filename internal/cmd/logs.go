@@ -96,7 +96,10 @@ func runLogs(cmd *cobra.Command, args []string) error {
 			if logsSince != "" {
 				logsCommand += fmt.Sprintf(" --since %s", logsSince)
 			}
-			result, _ := conn.Client.Exec(ctx, logsCommand)
+			result, err := conn.Client.Exec(ctx, logsCommand)
+			if err != nil {
+				return fmt.Errorf("failed to read logs: %w", err)
+			}
 			fmt.Print(result.Stdout)
 			if result.Stderr != "" {
 				fmt.Print(result.Stderr)

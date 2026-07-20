@@ -62,6 +62,37 @@ func TestValidateProjectConfig(t *testing.T) {
 			wantErrors: true,
 		},
 		{
+			name: "valid healthcheck tuning",
+			config: &ProjectConfig{
+				Name: "my-app",
+				PHP:  PHPConfig{Version: "8.3"},
+				Deploy: DeployConfig{
+					HealthcheckTimeout:  120,
+					HealthcheckRetries:  40,
+					HealthcheckInterval: 5,
+				},
+			},
+			wantErrors: false,
+		},
+		{
+			name: "negative healthcheck timeout",
+			config: &ProjectConfig{
+				Name:   "my-app",
+				PHP:    PHPConfig{Version: "8.3"},
+				Deploy: DeployConfig{HealthcheckTimeout: -1},
+			},
+			wantErrors: true,
+		},
+		{
+			name: "healthcheck interval above bound",
+			config: &ProjectConfig{
+				Name:   "my-app",
+				PHP:    PHPConfig{Version: "8.3"},
+				Deploy: DeployConfig{HealthcheckInterval: 999},
+			},
+			wantErrors: true,
+		},
+		{
 			name: "invalid database driver",
 			config: &ProjectConfig{
 				Name: "my-app",

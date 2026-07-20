@@ -98,15 +98,19 @@ func runAppList(cmd *cobra.Command, args []string) error {
 		}
 
 		// Get container status
-		statusResult, _ := conn.Client.Exec(ctx, fmt.Sprintf("docker ps --filter name=%s --format '{{.Status}}' 2>/dev/null", app))
-		status := strings.TrimSpace(statusResult.Stdout)
+		status := ""
+		if statusResult, err := conn.Client.Exec(ctx, fmt.Sprintf("docker ps --filter name=%s --format '{{.Status}}' 2>/dev/null", app)); err == nil && statusResult != nil {
+			status = strings.TrimSpace(statusResult.Stdout)
+		}
 		if status == "" {
 			status = "stopped"
 		}
 
 		// Get current release
-		releaseResult, _ := conn.Client.Exec(ctx, fmt.Sprintf("readlink %s/current 2>/dev/null | xargs basename", constants.AppBasePath(app)))
-		release := strings.TrimSpace(releaseResult.Stdout)
+		release := ""
+		if releaseResult, err := conn.Client.Exec(ctx, fmt.Sprintf("readlink %s/current 2>/dev/null | xargs basename", constants.AppBasePath(app))); err == nil && releaseResult != nil {
+			release = strings.TrimSpace(releaseResult.Stdout)
+		}
 		if release == "" {
 			release = "-"
 		}
@@ -238,32 +242,38 @@ func runAppStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Server:      %s\n\n", serverName)
 
 	// Container status
-	result, _ := conn.Client.Exec(ctx, fmt.Sprintf("docker inspect %s --format '{{.State.Status}}' 2>/dev/null", appName))
-	status := strings.TrimSpace(result.Stdout)
+	status := ""
+	if result, err := conn.Client.Exec(ctx, fmt.Sprintf("docker inspect %s --format '{{.State.Status}}' 2>/dev/null", appName)); err == nil && result != nil {
+		status = strings.TrimSpace(result.Stdout)
+	}
 	if status == "" {
 		status = "not deployed"
 	}
 	fmt.Printf("Status:      %s\n", status)
 
 	// Current release
-	result, _ = conn.Client.Exec(ctx, fmt.Sprintf("readlink %s/current 2>/dev/null | xargs basename", appPath))
-	release := strings.TrimSpace(result.Stdout)
+	release := ""
+	if result, err := conn.Client.Exec(ctx, fmt.Sprintf("readlink %s/current 2>/dev/null | xargs basename", appPath)); err == nil && result != nil {
+		release = strings.TrimSpace(result.Stdout)
+	}
 	if release != "" {
 		fmt.Printf("Release:     %s\n", release)
 	}
 
 	// Uptime
 	if status == "running" {
-		result, _ = conn.Client.Exec(ctx, fmt.Sprintf("docker inspect %s --format '{{.State.StartedAt}}' 2>/dev/null", appName))
-		startedAt := strings.TrimSpace(result.Stdout)
-		if startedAt != "" {
-			fmt.Printf("Started:     %s\n", startedAt)
+		if result, err := conn.Client.Exec(ctx, fmt.Sprintf("docker inspect %s --format '{{.State.StartedAt}}' 2>/dev/null", appName)); err == nil && result != nil {
+			if startedAt := strings.TrimSpace(result.Stdout); startedAt != "" {
+				fmt.Printf("Started:     %s\n", startedAt)
+			}
 		}
 	}
 
 	// Available releases
-	result, _ = conn.Client.Exec(ctx, fmt.Sprintf("ls -1t %s/releases 2>/dev/null | head -5", appPath))
-	releases := strings.TrimSpace(result.Stdout)
+	releases := ""
+	if result, err := conn.Client.Exec(ctx, fmt.Sprintf("ls -1t %s/releases 2>/dev/null | head -5", appPath)); err == nil && result != nil {
+		releases = strings.TrimSpace(result.Stdout)
+	}
 	if releases != "" {
 		fmt.Println("\nRecent releases:")
 		for _, r := range strings.Split(releases, "\n") {

@@ -121,6 +121,24 @@ func ValidateProjectConfig(config *ProjectConfig) ValidationErrors {
 		})
 	}
 
+	healthcheckBounds := []struct {
+		field string
+		value int
+		max   int
+	}{
+		{"deploy.healthcheck_timeout", config.Deploy.HealthcheckTimeout, 3600},
+		{"deploy.healthcheck_retries", config.Deploy.HealthcheckRetries, 1000},
+		{"deploy.healthcheck_interval", config.Deploy.HealthcheckInterval, 300},
+	}
+	for _, b := range healthcheckBounds {
+		if b.value < 0 || b.value > b.max {
+			errors = append(errors, ValidationError{
+				Field:   b.field,
+				Message: fmt.Sprintf("must be between 0 (default) and %d", b.max),
+			})
+		}
+	}
+
 	for key := range config.Env.Dev {
 		if err := security.ValidateEnvKey(key); err != nil {
 			errors = append(errors, ValidationError{
