@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,9 +21,12 @@ type ComposerJSON struct {
 type ComposerResult struct {
 	Name       string
 	PHPVersion string
-	Extensions []string
-	HasSymfony bool
-	Packages   map[string]string
+	// PHPVersionWarning is set when the detected version had to be adjusted
+	// (e.g. floored to the minimum version supported by FrankenPHP).
+	PHPVersionWarning string
+	Extensions        []string
+	HasSymfony        bool
+	Packages          map[string]string
 }
 
 // ParseComposer parses the composer.json file
@@ -54,9 +58,9 @@ func (s *Scanner) ParseComposer() (*ComposerResult, error) {
 
 	// Extract PHP version
 	if phpVersion, ok := composer.Require["php"]; ok {
-		result.PHPVersion = extractPHPVersion(phpVersion)
+		result.PHPVersion, result.PHPVersionWarning = extractPHPVersion(phpVersion)
 	} else {
-		result.PHPVersion = "8.3" // Default
+		result.PHPVersion = defaultPHPVersion
 	}
 
 	// Check for Symfony
@@ -78,41 +82,58 @@ func (s *Scanner) ParseComposer() (*ComposerResult, error) {
 	return result, nil
 }
 
-// extractPHPVersion extracts a clean PHP version from composer constraint.
-// Compares matches numerically so "8.10" is recognised as higher than "8.9"
-// (string comparison would incorrectly rank "8.9" above "8.10").
-func extractPHPVersion(constraint string) string {
-	re := regexp.MustCompile(`8\.\d+`)
-	matches := re.FindAllString(constraint, -1)
+const (
+	// defaultPHPVersion is used when no usable PHP 8.x version is found.
+	defaultPHPVersion = "8.3"
+	// minPHPMinor is the minimum 8.x minor with an official FrankenPHP image
+	// (dunglas/frankenphp requires PHP >= 8.2).
+	minPHPMinor = 2
+)
+
+// phpConstraintRegex captures an optional comparison operator and the minor
+// component of each "8.x" version in a composer constraint.
+var phpConstraintRegex = regexp.MustCompile(`(>=|<=|<|>|\^|~)?\s*8\.(\d+)`)
+
+// extractPHPVersion extracts the highest PHP 8.x version allowed by the
+// composer constraint. An exclusive upper bound ("<8.4") contributes the
+// version just below it ("8.3"). Minors are compared numerically so "8.10"
+// ranks above "8.9". The result is floored at 8.2 (the minimum version with
+// a FrankenPHP image); a non-empty warning is returned when the constraint
+// had to be adjusted or could not be interpreted.
+func extractPHPVersion(constraint string) (string, string) {
+	matches := phpConstraintRegex.FindAllStringSubmatch(constraint, -1)
 
 	if len(matches) == 0 {
-		return "8.3" // Default to latest stable
+		if strings.TrimSpace(constraint) == "" {
+			return defaultPHPVersion, ""
+		}
+		return defaultPHPVersion, fmt.Sprintf(
+			"no PHP 8.x version found in composer constraint %q, using PHP %s",
+			constraint, defaultPHPVersion)
 	}
 
-	highest := matches[0]
-	highestMinor := phpMinor(highest)
-	for _, m := range matches[1:] {
-		if phpMinor(m) > highestMinor {
-			highest = m
-			highestMinor = phpMinor(m)
+	highestMinor := -1
+	for _, m := range matches {
+		minor, err := strconv.Atoi(m[2])
+		if err != nil {
+			continue
+		}
+		if m[1] == "<" {
+			// Exclusive upper bound: the highest allowed minor is one below.
+			minor--
+		}
+		if minor > highestMinor {
+			highestMinor = minor
 		}
 	}
 
-	return highest
-}
+	if highestMinor < minPHPMinor {
+		return defaultPHPVersion, fmt.Sprintf(
+			"composer constraint %q allows PHP 8.%d but FrankenPHP requires PHP >= 8.2, using PHP %s (set php.version in frankendeploy.yaml to override)",
+			constraint, highestMinor, defaultPHPVersion)
+	}
 
-// phpMinor returns the minor-version component of a "8.x" string, or -1 if
-// the string does not follow that format.
-func phpMinor(v string) int {
-	parts := strings.SplitN(v, ".", 2)
-	if len(parts) != 2 {
-		return -1
-	}
-	n, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return -1
-	}
-	return n
+	return fmt.Sprintf("8.%d", highestMinor), ""
 }
 
 // GetPackageVersion returns the version constraint for a package
