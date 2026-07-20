@@ -72,7 +72,7 @@ PHP configuration for your application.
 
 ```yaml
 php:
-  version: "8.3"      # PHP version (8.1, 8.2, 8.3, 8.4)
+  version: "8.3"      # PHP version (8.2 minimum — required by FrankenPHP)
   extensions:         # PHP extensions to install
     - pdo_pgsql
     - intl
@@ -169,10 +169,11 @@ When you run `frankendeploy init`, it automatically detects:
 
 | Feature | Detection Method |
 |---------|------------------|
-| PHP version | `composer.json` require.php constraint |
+| PHP version | `composer.json` require.php constraint (floored at 8.2) |
 | PHP extensions | `composer.json` ext-* requirements |
 | Database | `doctrine.yaml`, `.env` DATABASE_URL |
 | Assets | `package.json`, `vite.config.js`, `importmap.php` |
+| API Platform | `composer.json` (`api-platform/*`) — sets `healthcheck_path: /api` |
 
 ### Init Options
 

@@ -15,7 +15,7 @@ This script automatically detects your OS and architecture and installs the late
 
 ## Using Go
 
-If you have Go 1.21+ installed:
+If you have Go 1.24+ installed:
 
 ```bash
 go install github.com/yoanbernabeu/frankendeploy/cmd/frankendeploy@latest
@@ -30,24 +30,26 @@ brew install frankendeploy
 
 ## Manual Download
 
-Download the binary for your platform from the [GitHub Releases](https://github.com/yoanbernabeu/frankendeploy/releases) page.
+Download the binary for your platform from the [GitHub Releases](https://github.com/yoanbernabeu/frankendeploy/releases) page. Archive names include the version number, e.g. `frankendeploy_0.9.0_linux_amd64.tar.gz`.
 
 ### Linux (amd64)
 ```bash
-curl -LO https://github.com/yoanbernabeu/frankendeploy/releases/latest/download/frankendeploy_linux_amd64.tar.gz
-tar -xzf frankendeploy_linux_amd64.tar.gz
+VERSION=0.9.0  # See https://github.com/yoanbernabeu/frankendeploy/releases/latest
+curl -LO https://github.com/yoanbernabeu/frankendeploy/releases/download/v${VERSION}/frankendeploy_${VERSION}_linux_amd64.tar.gz
+tar -xzf frankendeploy_${VERSION}_linux_amd64.tar.gz
 sudo mv frankendeploy /usr/local/bin/
 ```
 
 ### macOS (Apple Silicon)
 ```bash
-curl -LO https://github.com/yoanbernabeu/frankendeploy/releases/latest/download/frankendeploy_darwin_arm64.tar.gz
-tar -xzf frankendeploy_darwin_arm64.tar.gz
+VERSION=0.9.0  # See https://github.com/yoanbernabeu/frankendeploy/releases/latest
+curl -LO https://github.com/yoanbernabeu/frankendeploy/releases/download/v${VERSION}/frankendeploy_${VERSION}_darwin_arm64.tar.gz
+tar -xzf frankendeploy_${VERSION}_darwin_arm64.tar.gz
 sudo mv frankendeploy /usr/local/bin/
 ```
 
 ### Windows
-Download `frankendeploy_windows_amd64.zip` and add it to your PATH.
+Download `frankendeploy_<version>_windows_amd64.zip` and add it to your PATH.
 
 ## Verify Installation
 

@@ -77,18 +77,14 @@ Update comparison links at bottom:
 [X.Y.Z]: https://github.com/yoanbernabeu/FrankenDeploy/compare/vPREVIOUS...vX.Y.Z
 ```
 
-#### 4.2 Documentation Hero
+#### 4.2 Documentation
 
-Update version in `docs/src/components/homepage/HeroAnimated.astro` line 6:
-
-```astro
-const { version = "X.Y.Z" } = Astro.props;
-```
+Check whether `docs/src/content/docs/installation.md` pins a version in the manual download examples (`VERSION=X.Y.Z`) and update it to the new version.
 
 ### Step 5: Commit and Push
 
 ```bash
-git add CHANGELOG.md docs/src/components/homepage/HeroAnimated.astro
+git add CHANGELOG.md docs/src/content/docs/installation.md
 git commit -m "chore(release): bump version to X.Y.Z
 
 Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
@@ -129,7 +125,7 @@ GitHub `--generate-notes` automatically credits contributors in release notes.
 - [ ] Version type matches changes (major/minor/patch)
 - [ ] CHANGELOG.md updated with all PRs
 - [ ] All contributors credited with @username
-- [ ] Hero version updated in docs
+- [ ] Pinned version in installation.md updated
 - [ ] CI passed after version commit
 - [ ] GitHub release created
 

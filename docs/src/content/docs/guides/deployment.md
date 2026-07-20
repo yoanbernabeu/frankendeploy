@@ -9,14 +9,17 @@ description: Deploy your Symfony application to production
 frankendeploy deploy production
 ```
 
-This command performs a complete deployment:
-1. Builds Docker image locally
-2. Transfers image to server
-3. Stops old container
-4. Starts new container
-5. Runs health checks
-6. Updates Caddy configuration
-7. Cleans up old releases
+This command performs a complete blue-green deployment:
+1. Generates missing Docker artifacts (`Dockerfile`, `docker-entrypoint.sh`, `.dockerignore`) — no need to run `build` first, and customized files are never overwritten
+2. Builds the Docker image (locally, or on the server with remote build)
+3. Transfers it to the server
+4. Sets up the managed database container if configured (`DATABASE_URL` is injected automatically)
+5. Starts the **new** container alongside the old one and runs pre-deploy hooks
+6. Runs health checks on the new container
+7. Swaps traffic to the new container (zero downtime), then stops the old one
+8. Updates Caddy configuration and cleans up old releases
+
+If any step fails before the swap, the old container keeps serving traffic untouched.
 
 ## Deployment Options
 
@@ -95,6 +98,8 @@ deploy:
   healthcheck_path: /health
 ```
 
+The default path is `/`. For **API Platform** projects, `init` detects the framework and sets the path to `/api` automatically — a pure API returns 404 on `/`, which would fail every health check. The same path is also used by Caddy's active health checks on the running container.
+
 Create a health endpoint in your Symfony app:
 
 ```php
@@ -106,7 +111,7 @@ public function health(): Response
 }
 ```
 
-If the health check fails, FrankenDeploy automatically rolls back.
+If the health check fails, the new container is removed and the old one keeps serving traffic — a failed deployment never takes your site down.
 
 ## Deployment Hooks
 
@@ -202,10 +207,14 @@ FrankenDeploy ensures zero downtime:
 
 1. New container starts alongside old one
 2. Health checks verify new container
-3. Caddy switches traffic to new container
+3. Traffic switches to the new container via a rename-based swap (Docker's embedded DNS follows the container name, so no request is dropped)
 4. Old container is stopped
 
-If anything fails, traffic stays on the old container.
+If anything fails — including the swap itself — traffic stays on the old container.
+
+## Managed Database
+
+With `database.managed: true` (the default for PostgreSQL/MySQL), each deployment ensures the database container is running and injects the generated `DATABASE_URL` into your application automatically. Credentials are created once and persist across deployments — you never have to set `DATABASE_URL` yourself.
 
 ## Monitoring Deployments
 

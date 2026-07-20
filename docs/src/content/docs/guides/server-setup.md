@@ -72,7 +72,7 @@ The `--email` flag is **required** for Let's Encrypt certificate registration.
 
 This command:
 1. Installs Docker if not present
-2. Configures UFW firewall (ports 22, 80, 443)
+2. Configures UFW firewall (HTTP/HTTPS + SSH — both your configured SSH port and the port the SSH daemon actually uses are allowed before the firewall is enabled, so a custom port or gateway setup can never lock you out)
 3. Installs and configures Fail2ban (SSH brute-force protection)
 4. Creates the FrankenDeploy directory structure
 5. Sets up the `frankendeploy` Docker network
@@ -231,7 +231,7 @@ This ensures **zero downtime** for existing apps during deployments.
 
 FrankenDeploy automatically configures:
 
-1. **UFW Firewall** - Only ports 22, 80, 443 open
+1. **UFW Firewall** - Only SSH (your actual SSH ports, not just 22), 80 and 443 open
 2. **Fail2ban** - SSH brute-force protection (automatic)
 
 ### Additional Recommendations
