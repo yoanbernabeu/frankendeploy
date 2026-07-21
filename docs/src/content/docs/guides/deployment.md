@@ -177,6 +177,31 @@ This warning only appears once per application. Once you add migrations and rede
 
 **Note:** This check only runs when you have a migration hook configured in your `pre_deploy` hooks.
 
+## Automatic Database Backup Before Migrations
+
+With a **managed database** (`database.managed: true`), FrankenDeploy dumps the database automatically before any `pre_deploy` hook containing `doctrine:migrations:migrate`:
+
+- The dump is gzipped and stored on the server in `/opt/frankendeploy/apps/<app>/shared/backups/` (permissions `600`)
+- Retention follows `deploy.keep_releases` (default: 5 backups)
+- A failed backup **aborts the deploy** — use `--force` to deploy without this safety net (not recommended)
+
+Why this matters: migrations run **before** the traffic switch, while the old code still serves requests. If the health check fails after a successful migration, the containers are rolled back but **the database schema is not** — the previous version then runs on the new schema. When that happens, FrankenDeploy tells you explicitly and points to the backup:
+
+```
+⚠️  The database was already migrated during this deploy. Rolling back the code may not be enough...
+⚠️  Database backup taken before the migration: /opt/frankendeploy/apps/demo/shared/backups/pgsql-20260721-120000.sql.gz
+```
+
+Restore example (PostgreSQL):
+
+```bash
+gunzip -c backups/pgsql-<tag>.sql.gz | docker exec -i <app>-db psql -U <user> <db>
+```
+
+**Best practice:** write backward-compatible migrations (expand/contract pattern — add columns before using them, drop them one release later). A code rollback then stays safe even after a migration.
+
+For an **external database** (not managed by FrankenDeploy), no automatic backup is possible — back it up yourself before deploying migrations.
+
 ## Release Management
 
 FrankenDeploy keeps multiple releases for instant rollback:
