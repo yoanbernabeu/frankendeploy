@@ -1,10 +1,10 @@
 package ssh
 
 import (
+	"errors"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -23,18 +23,22 @@ const (
 type ClientOption func(*clientOptions)
 
 type clientOptions struct {
-	timeout      time.Duration
-	maxRetries   int
-	initialDelay time.Duration
-	maxDelay     time.Duration
+	timeout          time.Duration
+	maxRetries       int
+	initialDelay     time.Duration
+	maxDelay         time.Duration
+	passphrasePrompt PassphraseReader
+	hostKeyPrompt    HostKeyPrompt
 }
 
 func defaultOptions() clientOptions {
 	return clientOptions{
-		timeout:      DefaultTimeout,
-		maxRetries:   DefaultMaxRetries,
-		initialDelay: DefaultInitialDelay,
-		maxDelay:     DefaultMaxDelay,
+		timeout:          DefaultTimeout,
+		maxRetries:       DefaultMaxRetries,
+		initialDelay:     DefaultInitialDelay,
+		maxDelay:         DefaultMaxDelay,
+		passphrasePrompt: DefaultPassphraseReader,
+		hostKeyPrompt:    DefaultHostKeyPrompt,
 	}
 }
 
@@ -66,6 +70,20 @@ func WithMaxDelay(d time.Duration) ClientOption {
 	}
 }
 
+// WithPassphraseReader sets the prompt used for encrypted key passphrases.
+func WithPassphraseReader(r PassphraseReader) ClientOption {
+	return func(o *clientOptions) {
+		o.passphrasePrompt = r
+	}
+}
+
+// WithHostKeyPrompt sets the prompt used to confirm unknown host keys (TOFU).
+func WithHostKeyPrompt(p HostKeyPrompt) ClientOption {
+	return func(o *clientOptions) {
+		o.hostKeyPrompt = p
+	}
+}
+
 // Client represents an SSH client connection
 type Client struct {
 	Host    string
@@ -76,6 +94,9 @@ type Client struct {
 	opts    clientOptions
 	// sshConfig is stored to allow reconnection without reloading keys
 	sshConfig *ssh.ClientConfig
+	// cachedSigner memoizes the (possibly passphrase-decrypted) key file
+	// signer so the passphrase is prompted at most once per process
+	cachedSigner ssh.Signer
 }
 
 // NewClient creates a new SSH client.
@@ -99,21 +120,19 @@ func NewClient(host, user string, port int, keyPath string, opts ...ClientOption
 
 // Connect establishes an SSH connection with retry and exponential backoff.
 func (c *Client) Connect() error {
-	signer, err := c.loadPrivateKey()
+	auths, err := c.authMethods()
 	if err != nil {
-		return fmt.Errorf("failed to load private key: %w", err)
+		return fmt.Errorf("failed to load SSH credentials: %w", err)
 	}
 
-	hostKeyCallback, err := c.hostKeyCallback()
+	hostKeyCallback, err := ResolveHostKeyCallback(c.opts.hostKeyPrompt)
 	if err != nil {
 		return fmt.Errorf("host key verification failed: %w", err)
 	}
 
 	c.sshConfig = &ssh.ClientConfig{
-		User: c.User,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
-		},
+		User:            c.User,
+		Auth:            auths,
 		HostKeyCallback: hostKeyCallback,
 		Timeout:         c.opts.timeout,
 	}
@@ -121,7 +140,9 @@ func (c *Client) Connect() error {
 	return c.connectWithRetry()
 }
 
-// connectWithRetry attempts to connect with exponential backoff.
+// connectWithRetry attempts to connect with exponential backoff. Only
+// network-level errors are retried: authentication and host key failures
+// are permanent and surfaced immediately.
 func (c *Client) connectWithRetry() error {
 	addr := fmt.Sprintf("%s:%d", c.Host, c.Port)
 	var lastErr error
@@ -137,10 +158,47 @@ func (c *Client) connectWithRetry() error {
 			c.client = client
 			return nil
 		}
+		if !isRetryableConnError(err) {
+			return classifyConnError(addr, err)
+		}
 		lastErr = err
 	}
 
 	return fmt.Errorf("failed to connect to %s after %d attempts: %w", addr, c.opts.maxRetries, lastErr)
+}
+
+// isRetryableConnError reports whether a connection error is worth retrying.
+// Host key and authentication failures are permanent; retrying them only
+// hides the real message behind "failed after N attempts".
+func isRetryableConnError(err error) bool {
+	var changedErr *HostKeyChangedError
+	var unknownErr *HostKeyUnknownError
+	var keyErr *knownhosts.KeyError
+	if errors.As(err, &changedErr) || errors.As(err, &unknownErr) || errors.As(err, &keyErr) {
+		return false
+	}
+
+	msg := err.Error()
+	if strings.Contains(msg, "unable to authenticate") ||
+		strings.Contains(msg, "permission denied") ||
+		strings.Contains(msg, "no supported methods remain") {
+		return false
+	}
+	return true
+}
+
+// classifyConnError unwraps host key errors so the user sees the dedicated
+// message instead of the generic handshake wrapper.
+func classifyConnError(addr string, err error) error {
+	var changedErr *HostKeyChangedError
+	if errors.As(err, &changedErr) {
+		return changedErr
+	}
+	var unknownErr *HostKeyUnknownError
+	if errors.As(err, &unknownErr) {
+		return unknownErr
+	}
+	return fmt.Errorf("failed to connect to %s: %w", addr, err)
 }
 
 // backoffDelay returns the delay for the given retry attempt using exponential backoff.
@@ -172,111 +230,6 @@ func (c *Client) Reconnect() error {
 		c.client = nil
 	}
 	return c.connectWithRetry()
-}
-
-// loadPrivateKey loads the SSH private key
-func (c *Client) loadPrivateKey() (ssh.Signer, error) {
-	// CI/CD: Check for SSH key in environment variable first
-	if envKey := os.Getenv("FRANKENDEPLOY_SSH_KEY"); envKey != "" {
-		signer, err := ssh.ParsePrivateKey([]byte(envKey))
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse FRANKENDEPLOY_SSH_KEY: %w", err)
-		}
-		return signer, nil
-	}
-
-	keyPath := c.KeyPath
-	if keyPath == "" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-		// Try common key locations
-		keyPaths := []string{
-			filepath.Join(homeDir, ".ssh", "id_ed25519"),
-			filepath.Join(homeDir, ".ssh", "id_rsa"),
-		}
-		for _, p := range keyPaths {
-			if _, err := os.Stat(p); err == nil {
-				keyPath = p
-				break
-			}
-		}
-		if keyPath == "" {
-			return nil, fmt.Errorf("no SSH key found (set FRANKENDEPLOY_SSH_KEY for CI/CD)")
-		}
-	}
-
-	// Expand ~ in path
-	if len(keyPath) >= 2 && keyPath[:2] == "~/" {
-		homeDir, _ := os.UserHomeDir()
-		keyPath = filepath.Join(homeDir, keyPath[2:])
-	}
-
-	key, err := os.ReadFile(keyPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read key file: %w", err)
-	}
-
-	signer, err := ssh.ParsePrivateKey(key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse private key: %w", err)
-	}
-
-	return signer, nil
-}
-
-// hostKeyCallback returns the host key callback function
-// SECURITY: This function requires a valid known_hosts file by default
-// In CI/CD, set FRANKENDEPLOY_KNOWN_HOSTS with the content of known_hosts
-// or FRANKENDEPLOY_SKIP_HOST_KEY_CHECK=true to skip verification (not recommended)
-func (c *Client) hostKeyCallback() (ssh.HostKeyCallback, error) {
-	// CI/CD: Check for known_hosts content in environment variable
-	if knownHostsContent := os.Getenv("FRANKENDEPLOY_KNOWN_HOSTS"); knownHostsContent != "" {
-		// Write to temp file for knownhosts.New()
-		tmpFile, err := os.CreateTemp("", "known_hosts")
-		if err != nil {
-			return nil, fmt.Errorf("failed to create temp known_hosts: %w", err)
-		}
-		defer os.Remove(tmpFile.Name())
-
-		if _, err := tmpFile.WriteString(knownHostsContent); err != nil {
-			return nil, fmt.Errorf("failed to write temp known_hosts: %w", err)
-		}
-		tmpFile.Close()
-
-		callback, err := knownhosts.New(tmpFile.Name())
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse FRANKENDEPLOY_KNOWN_HOSTS: %w", err)
-		}
-		return callback, nil
-	}
-
-	// CI/CD: Option to skip host key verification (use with caution)
-	if os.Getenv("FRANKENDEPLOY_SKIP_HOST_KEY_CHECK") == "true" {
-		return ssh.InsecureIgnoreHostKey(), nil
-	}
-
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("cannot determine home directory: %w", err)
-	}
-
-	knownHostsPath := filepath.Join(homeDir, ".ssh", "known_hosts")
-
-	if _, err := os.Stat(knownHostsPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("SSH known_hosts file not found at %s. "+
-			"Please connect to the server manually first with: ssh %s@%s -p %d\n"+
-			"For CI/CD, set FRANKENDEPLOY_KNOWN_HOSTS or FRANKENDEPLOY_SKIP_HOST_KEY_CHECK=true",
-			knownHostsPath, c.User, c.Host, c.Port)
-	}
-
-	callback, err := knownhosts.New(knownHostsPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read known_hosts: %w", err)
-	}
-
-	return callback, nil
 }
 
 // NewSession creates a new SSH session.

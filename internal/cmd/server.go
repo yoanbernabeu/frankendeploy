@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -189,10 +190,19 @@ func testAndConfigureSSH(name string, serverCfg *config.ServerConfig, globalCfg 
 
 	// Try connection with current configuration
 	client := ssh.NewClient(serverCfg.Host, serverCfg.User, serverCfg.Port, serverCfg.KeyPath)
-	if err := client.Connect(); err == nil {
+	err := client.Connect()
+	if err == nil {
 		client.Close()
 		PrintSuccess("SSH connection successful")
 		return nil
+	}
+
+	// A host key problem (unknown or changed) affects every key the same
+	// way: trying other keys would only bury the real message.
+	var changedErr *ssh.HostKeyChangedError
+	var unknownErr *ssh.HostKeyUnknownError
+	if errors.As(err, &changedErr) || errors.As(err, &unknownErr) {
+		return err
 	}
 
 	PrintWarning("Connection failed with default key")
@@ -203,11 +213,14 @@ func testAndConfigureSSH(name string, serverCfg *config.ServerConfig, globalCfg 
 		return fmt.Errorf("failed to discover SSH keys: %w", err)
 	}
 
-	// Filter out encrypted keys and already tried key
+	// Filter out the already tried key. Encrypted keys are kept in
+	// interactive mode (their passphrase is prompted on use) and only
+	// skipped when no terminal is available to prompt.
+	interactive := IsInteractive()
 	var availableKeys []ssh.SSHKeyInfo
 	for _, key := range keys {
-		if key.IsEncrypted {
-			PrintVerbose("Skipping encrypted key: %s", key.Name)
+		if key.IsEncrypted && !interactive {
+			PrintVerbose("Skipping encrypted key (no terminal to prompt for passphrase): %s", key.Name)
 			continue
 		}
 		if serverCfg.KeyPath != "" && key.Path == serverCfg.KeyPath {
@@ -222,7 +235,7 @@ func testAndConfigureSSH(name string, serverCfg *config.ServerConfig, globalCfg 
 
 	// Try keys - either interactively or automatically
 	var workingKey *ssh.SSHKeyInfo
-	if IsInteractive() {
+	if interactive {
 		workingKey = interactiveKeySelection(serverCfg, availableKeys)
 	} else {
 		workingKey = autoTryKeys(serverCfg, availableKeys)
@@ -248,7 +261,11 @@ func testAndConfigureSSH(name string, serverCfg *config.ServerConfig, globalCfg 
 func interactiveKeySelection(serverCfg *config.ServerConfig, keys []ssh.SSHKeyInfo) *ssh.SSHKeyInfo {
 	options := make([]string, len(keys))
 	for i, key := range keys {
-		options[i] = fmt.Sprintf("%s (%s)", key.Name, key.Type)
+		if key.IsEncrypted {
+			options[i] = fmt.Sprintf("%s (%s, passphrase-protected)", key.Name, key.Type)
+		} else {
+			options[i] = fmt.Sprintf("%s (%s)", key.Name, key.Type)
+		}
 	}
 
 	fmt.Println()

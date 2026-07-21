@@ -53,14 +53,34 @@ Skip SSH test (useful for CI setup):
 frankendeploy server add prod user@host --skip-test
 ```
 
-### SSH Key Selection
+### SSH Authentication
 
-When testing the connection, FrankenDeploy tries keys in this order:
-1. `~/.ssh/id_ed25519` (preferred)
-2. `~/.ssh/id_rsa`
-3. Other keys in `~/.ssh/`
+FrankenDeploy authenticates in this order:
 
-**Note:** Passphrase-protected keys are skipped during auto-detection.
+1. **ssh-agent** — when `SSH_AUTH_SOCK` is set, keys loaded in the agent are tried first
+2. **Key file** — the configured key (`--key`) or auto-detected: `~/.ssh/id_ed25519`, then `~/.ssh/id_rsa`, then other keys in `~/.ssh/`
+
+Passphrase-protected keys are fully supported: the passphrase is prompted when needed and never stored. In non-interactive mode (CI/CD, `--yes`), passphrase-protected keys cannot be prompted — use ssh-agent or `FRANKENDEPLOY_SSH_KEY` instead.
+
+### First Connection (Host Key Verification)
+
+On the first connection to a new server, FrankenDeploy shows the host key fingerprint and asks for confirmation, exactly like OpenSSH:
+
+```
+The authenticity of host 'your-server.com' can't be established.
+ssh-ed25519 key fingerprint is SHA256:xxxxxxxx...
+Are you sure you want to continue connecting (yes/no)?
+```
+
+The accepted key is recorded in `~/.ssh/known_hosts` — no need to run a manual `ssh` first.
+
+If the server's host key changes later (server reinstalled or recreated), the connection is refused with a clear message. When the change is expected, remove the old key with:
+
+```bash
+ssh-keygen -R your-server.com
+```
+
+In CI/CD, set `FRANKENDEPLOY_KNOWN_HOSTS` with the content of your known_hosts file (no interactive confirmation happens there).
 
 ## Setting Up the Server
 
