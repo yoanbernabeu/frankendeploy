@@ -213,6 +213,8 @@ deploy:
 
 Releases are stored in `/opt/frankendeploy/apps/your-app/releases/`.
 
+`keep_releases` also drives **disk usage**: after each deploy, FrankenDeploy removes the Docker images whose tag left the retention window (an image never in use by a container is the only kind removed), plus the pre-migration database backups beyond the same count. With remote builds, dangling intermediate layers are pruned after each build. Rollback targets and disk retention therefore always match.
+
 View releases:
 ```bash
 frankendeploy app status production

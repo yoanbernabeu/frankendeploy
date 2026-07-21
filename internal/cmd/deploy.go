@@ -311,6 +311,14 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	state.Phase = deploy.PhaseCleanup
 	PrintInfo("Cleaning up old releases...")
 	cleanupOldReleases(ctx, client, remoteAppPath, projectCfg.Deploy.KeepReleases)
+
+	// Prune images whose tag left the retention window: each deploy leaves a
+	// full image behind, and a small VPS fills up after a few dozen deploys
+	if removed, err := deploy.PruneOldImages(ctx, client, projectCfg.Name, remoteAppPath); err != nil {
+		PrintVerbose("Could not prune old images: %v", err)
+	} else if len(removed) > 0 {
+		PrintInfo("Removed %d old image(s): %s", len(removed), strings.Join(removed, ", "))
+	}
 	state.Phase = deploy.PhaseDone
 
 	PrintSuccess("Deployment complete!")
@@ -390,8 +398,9 @@ func transferImage(ctx context.Context, client ssh.Executor, serverCfg *config.S
 		return fmt.Errorf("failed to upload image: %w", err)
 	}
 
-	// Load image on remote
-	result, err := client.Exec(ctx, fmt.Sprintf("docker load -i %s && rm %s", remoteTarPath, remoteTarPath))
+	// Load image on remote. The tar is removed even when the load fails: a
+	// 500MB+ leftover in /tmp on every failed deploy fills the disk silently.
+	result, err := client.Exec(ctx, fmt.Sprintf("docker load -i %s; status=$?; rm -f %s; exit $status", remoteTarPath, remoteTarPath))
 	if err != nil {
 		return fmt.Errorf("failed to load image on server: %w", err)
 	}
@@ -453,6 +462,12 @@ func buildDockerImageRemote(ctx context.Context, client ssh.Executor, imageName,
 	// Cleanup build directory
 	if _, err := client.Exec(ctx, fmt.Sprintf("rm -rf %s", buildPath)); err != nil {
 		PrintVerbose("Could not cleanup build directory: %v", err)
+	}
+
+	// Remote builds leave dangling layers behind (each rebuild orphans the
+	// previous intermediate layers); prune them so they don't pile up
+	if _, err := client.Exec(ctx, "docker image prune -f"); err != nil {
+		PrintVerbose("Could not prune dangling images: %v", err)
 	}
 
 	return nil
