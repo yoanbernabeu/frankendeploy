@@ -11,7 +11,6 @@ import "github.com/yoanbernabeu/frankendeploy/internal/constants"
 const (
 	// Ports — sourced from constants package
 	AppPort         = constants.AppPort
-	MetricsPort     = "2019"
 	DevExternalPort = "8000"
 
 	// User/Group IDs — sourced from constants package

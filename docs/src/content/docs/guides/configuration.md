@@ -120,6 +120,7 @@ assets:
   build_tool: npm        # npm, yarn, pnpm, or assetmapper
   build_command: "npm run build"
   output_dir: "public/build"
+  node_version: "22"     # Node.js version for the build stage (default: 22)
 ```
 
 For Symfony AssetMapper, set:

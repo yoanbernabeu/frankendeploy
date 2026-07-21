@@ -11,7 +11,7 @@ FROM dunglas/frankenphp:{{ default "1" .FrankenPHPVersion }}-php{{ .PHP.Version 
 ###################
 # Node Build Stage
 ###################
-FROM node:20-slim AS node_build
+FROM node:{{ default "22" .Assets.NodeVersion }}-slim AS node_build
 
 WORKDIR /app
 
@@ -28,8 +28,6 @@ RUN {{ .Assets.BuildCommand }}
 FROM frankenphp_upstream AS frankenphp_base
 
 WORKDIR /app
-
-VOLUME /app/var/
 
 # Install system dependencies (netcat-openbsd is used by docker-entrypoint for
 # the database wait loop)
@@ -70,9 +68,6 @@ RUN groupadd --gid ${GID} app && \
     mkdir -p /app/var /data /config && \
     chown -R app:app /app /data /config
 
-# Allow Composer to run as superuser during build only
-ENV COMPOSER_ALLOW_SUPERUSER=1
-
 {{- if .PHP.IniValues }}
 
 # Custom PHP settings
@@ -87,7 +82,9 @@ EOF
 COPY --link --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint
 
 ENTRYPOINT ["docker-entrypoint"]
-HEALTHCHECK --start-period=60s CMD curl -f http://localhost:{{ metricsPort }}/metrics || exit 1
+# App-level health probe: proves the application answers, not just that the
+# Caddy process is up
+HEALTHCHECK --start-period=60s CMD curl -f http://localhost:{{ appPort }}{{ default "/" .HealthcheckPath }} || exit 1
 CMD ["frankenphp", "run", "--config", "/etc/caddy/Caddyfile"]
 
 ###################
@@ -103,7 +100,7 @@ RUN mv "$PHP_INI_DIR/php.ini-development" "$PHP_INI_DIR/php.ini"
 # Copy source and install dependencies
 COPY --link . ./
 RUN set -eux; \
-    composer install --no-scripts --no-progress --prefer-dist; \
+    COMPOSER_ALLOW_SUPERUSER=1 composer install --no-scripts --no-progress --prefer-dist; \
     # Build Symfony assets (Sass, AssetMapper)
     if php bin/console list 2>/dev/null | grep -q "sass:build"; then \
         php bin/console sass:build; \
@@ -130,18 +127,33 @@ ENV APP_DEBUG=0
 
 RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
 
+# Production PHP settings: OPcache tuned for immutable containers
+# (timestamps never revalidated: the code cannot change without a redeploy)
+COPY <<EOF $PHP_INI_DIR/conf.d/app.prod.ini
+opcache.validate_timestamps = 0
+opcache.memory_consumption = 256
+opcache.max_accelerated_files = 20000
+opcache.interned_strings_buffer = 16
+realpath_cache_size = 4096K
+realpath_cache_ttl = 600
+{{- if .HasPreload }}
+opcache.preload = /app/config/preload.php
+{{- end }}
+EOF
+
 # Copy composer files first for better caching
-COPY --link composer.* symfony.* ./
+COPY --link --chown={{ defaultUID }}:{{ defaultGID }} composer.* symfony.* ./
 
 # Install dependencies (no dev)
 RUN set -eux; \
-    composer install --no-cache --prefer-dist --no-dev --no-autoloader --no-scripts --no-progress
+    COMPOSER_ALLOW_SUPERUSER=1 composer install --no-cache --prefer-dist --no-dev --no-autoloader --no-scripts --no-progress
 
-# Copy application source
-COPY --link . ./
+# Copy application source (chown at copy time: a separate chown -R layer
+# would duplicate every file and double the image size)
+COPY --link --chown={{ defaultUID }}:{{ defaultGID }} . ./
 
 # Generate autoloader (required before running any Symfony commands)
-RUN composer dump-autoload --classmap-authoritative --no-dev
+RUN COMPOSER_ALLOW_SUPERUSER=1 composer dump-autoload --classmap-authoritative --no-dev
 
 # Build assets
 {{- if and .Assets .Assets.BuildTool }}
@@ -152,18 +164,23 @@ RUN set -eux; \
     php bin/console asset-map:compile --no-interaction
 {{- else }}
 # Webpack/Vite: copy pre-built assets from node_build stage
-COPY --from=node_build /app/{{ .Assets.OutputDir }} {{ .Assets.OutputDir }}
+COPY --from=node_build --link --chown={{ defaultUID }}:{{ defaultGID }} /app/{{ .Assets.OutputDir }} {{ .Assets.OutputDir }}
 {{- end }}
 {{- end }}
 
-# Finalize build
+# Finalize build: a failing script or warmup MUST fail the image build —
+# masking it only moves the explosion to the first HTTP request in production
 # Note: We don't use "composer dump-env prod" because env vars are provided at runtime
 # via mounted .env.local or Docker environment variables
 RUN set -eux; \
     mkdir -p var/cache var/log; \
-    composer run-script --no-dev post-install-cmd || true; \
+    if COMPOSER_ALLOW_SUPERUSER=1 composer run-script --list --no-dev | grep -q post-install-cmd; then \
+        COMPOSER_ALLOW_SUPERUSER=1 composer run-script --no-dev post-install-cmd; \
+    fi; \
+    php bin/console cache:clear --no-interaction; \
+    php bin/console cache:warmup --no-interaction; \
     chmod +x bin/console; \
-    chown -R app:app /app; \
+    chown -R app:app var; \
     sync
 
 # SECURITY: Run as non-root user

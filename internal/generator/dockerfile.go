@@ -28,6 +28,12 @@ type DockerfileData struct {
 	Assets            *config.AssetsConfig
 	Dockerfile        config.DockerfileConfig
 	FrankenPHPVersion string
+	// HealthcheckPath is the app endpoint probed by the container
+	// HEALTHCHECK (default "/")
+	HealthcheckPath string
+	// HasPreload enables opcache.preload when the project ships a
+	// config/preload.php
+	HasPreload bool
 }
 
 // Generate generates the Dockerfile content
@@ -37,6 +43,8 @@ func (g *DockerfileGenerator) Generate() (string, error) {
 		PHP:               g.config.PHP,
 		Dockerfile:        g.config.Dockerfile,
 		FrankenPHPVersion: g.config.FrankenPHPVersion,
+		HealthcheckPath:   g.config.Deploy.HealthcheckPath,
+		HasPreload:        hasPreloadFile(),
 	}
 
 	if g.config.Assets.BuildTool != "" {
@@ -56,6 +64,13 @@ func (g *DockerfileGenerator) Generate() (string, error) {
 	}
 
 	return g.loader.Execute("dockerfile.tmpl", data)
+}
+
+// hasPreloadFile reports whether the project (current directory, where
+// generation runs) ships a config/preload.php for OPcache preloading.
+func hasPreloadFile() bool {
+	info, err := os.Stat("config/preload.php")
+	return err == nil && !info.IsDir()
 }
 
 // WriteDockerfile writes the Dockerfile to the specified path

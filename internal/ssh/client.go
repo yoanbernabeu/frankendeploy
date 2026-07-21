@@ -181,7 +181,11 @@ func isRetryableConnError(err error) bool {
 	msg := err.Error()
 	if strings.Contains(msg, "unable to authenticate") ||
 		strings.Contains(msg, "permission denied") ||
-		strings.Contains(msg, "no supported methods remain") {
+		strings.Contains(msg, "no supported methods remain") ||
+		// Local credential errors (unpromptable or wrong passphrase) are
+		// deterministic: retrying cannot fix them.
+		strings.Contains(msg, "passphrase-protected") ||
+		strings.Contains(msg, "failed to decrypt key") {
 		return false
 	}
 	return true
