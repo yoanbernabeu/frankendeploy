@@ -526,14 +526,24 @@ func buildAppRunCommand(cfg *config.ProjectConfig, imageName, appPath, databaseU
 		envVars += fmt.Sprintf(" -e DATABASE_URL=%s", security.ShellEscape(databaseURL))
 	}
 
+	// Optional resource limits (validated at config load: safe to interpolate)
+	limits := ""
+	if cfg.Deploy.MemoryLimit != "" {
+		limits += fmt.Sprintf(" --memory %s", cfg.Deploy.MemoryLimit)
+	}
+	if cfg.Deploy.CPULimit != "" {
+		limits += fmt.Sprintf(" --cpus %s", cfg.Deploy.CPULimit)
+	}
+
 	// SECURITY: Run as non-root user with non-privileged port
 	return fmt.Sprintf(`docker run -d --name %s \
 		--network %s \
 		--restart unless-stopped \
 		--user %s \
+		%s%s \
 		%s \
 		%s \
-		%s`, containerName, constants.NetworkName, constants.ContainerUser, envVars, volumeMounts, imageName)
+		%s`, containerName, constants.NetworkName, constants.ContainerUser, constants.DockerLogOptions, limits, envVars, volumeMounts, imageName)
 }
 
 // readSavedDatabaseURL reads the DATABASE_URL persisted by a managed-database
@@ -951,8 +961,9 @@ func deployMessengerWorkers(ctx context.Context, client ssh.Executor, cfg *confi
 		%s \
 		%s \
 		%s \
+		%s \
 		php bin/console messenger:consume %s --time-limit=3600 --memory-limit=256M -vv`,
-		workerName, constants.NetworkName, constants.ContainerUser, envVars, volumeMounts, imageName, transportsArg)
+		workerName, constants.NetworkName, constants.ContainerUser, constants.DockerLogOptions, envVars, volumeMounts, imageName, transportsArg)
 
 	result, err := client.Exec(ctx, workerCmd)
 	if err != nil {
@@ -1018,10 +1029,12 @@ func deployManagedDatabase(ctx context.Context, client ssh.Executor, cfg *config
 		--network %s \
 		--restart unless-stopped \
 		%s \
+		%s \
 		-v %s-data:%s \
 		%s`,
 		dbContainerName,
 		constants.NetworkName,
+		constants.DockerLogOptions,
 		dockerEnv,
 		dbContainerName,
 		info.DataVolumePath,

@@ -710,8 +710,8 @@ func TestComposeGenerator_GenerateDev_WithMailerEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to generate: %v", err)
 	}
-	if !strings.Contains(compose, "mailhog") {
-		t.Error("should contain mailhog when Mailer is enabled")
+	if !strings.Contains(compose, "mailpit") {
+		t.Error("should contain mailpit when Mailer is enabled")
 	}
 	if !strings.Contains(compose, "1025:1025") {
 		t.Error("should expose MailHog SMTP port")
@@ -731,8 +731,8 @@ func TestComposeGenerator_GenerateDev_WithoutMailer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to generate: %v", err)
 	}
-	if strings.Contains(compose, "mailhog") {
-		t.Error("should not contain mailhog without Mailer enabled")
+	if strings.Contains(compose, "mailpit") {
+		t.Error("should not contain mailpit without Mailer enabled")
 	}
 }
 

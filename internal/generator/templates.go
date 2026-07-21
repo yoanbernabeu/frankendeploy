@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"text/template"
+
+	"github.com/yoanbernabeu/frankendeploy/internal/constants"
 )
 
 //go:embed templates/*
@@ -87,6 +89,8 @@ func templateFuncs() template.FuncMap {
 		},
 		"appPort":     func() string { return AppPort },
 		"devPort":     func() string { return DevExternalPort },
+		"logMaxSize":  func() string { return constants.LogMaxSize },
+		"logMaxFile":  func() string { return constants.LogMaxFile },
 		"defaultUID":  func() string { return DefaultUID },
 		"defaultGID":  func() string { return DefaultGID },
 		"networkName": func() string { return NetworkName },
