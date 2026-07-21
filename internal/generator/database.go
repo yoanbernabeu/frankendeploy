@@ -21,6 +21,11 @@ type DBDriverInfo struct {
 	// BuildHealthCmd returns a command to check if the database is ready.
 	// Arguments (containerName, user, password) should be pre-escaped for shell safety.
 	BuildHealthCmd func(containerName, user, password string) string
+
+	// BuildDumpCmd returns a command writing a full SQL dump of the database
+	// to stdout (the caller pipes it to gzip and a file).
+	// Arguments (user, password, dbName) should be pre-escaped for shell safety.
+	BuildDumpCmd func(containerName, user, password, dbName string) string
 }
 
 // FullImage returns the Docker image reference with version and optional suffix.
@@ -58,6 +63,12 @@ var dbDriverRegistry = map[string]DBDriverInfo{
 		BuildHealthCmd: func(containerName, user, _ string) string {
 			return fmt.Sprintf("docker exec %s pg_isready -U %s", containerName, user)
 		},
+		// pg_dump runs inside the container over the local socket (trusted),
+		// so no password ever appears on a command line.
+		BuildDumpCmd: func(containerName, user, _, dbName string) string {
+			return fmt.Sprintf("docker exec %s pg_dump -U %s --clean --if-exists %s",
+				containerName, user, dbName)
+		},
 	},
 	"mysql": {
 		DockerImage:    "mysql",
@@ -76,6 +87,12 @@ var dbDriverRegistry = map[string]DBDriverInfo{
 		BuildHealthCmd: func(containerName, user, password string) string {
 			return fmt.Sprintf("docker exec %s mysqladmin ping -u%s -p%s --silent",
 				containerName, user, password)
+		},
+		// --single-transaction gives a consistent snapshot of InnoDB tables
+		// without locking the database while the old code still serves traffic.
+		BuildDumpCmd: func(containerName, user, password, dbName string) string {
+			return fmt.Sprintf("docker exec %s mysqldump -u%s -p%s --single-transaction --routines --triggers %s",
+				containerName, user, password, dbName)
 		},
 	},
 }

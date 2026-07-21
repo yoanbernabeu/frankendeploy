@@ -177,4 +177,3 @@ func FormatEnvCheckError(missing []EnvRequirement, serverName string) string {
 
 	return sb.String()
 }
-

@@ -196,20 +196,47 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	// Step 6: Run pre-deploy hooks on the NEW container
+	hasMigrationHook := deploy.HasMigrationHook(projectCfg.Deploy.Hooks.PreDeploy)
+	migrationAttempted := false
+	var dbBackupPath string
 	if len(projectCfg.Deploy.Hooks.PreDeploy) > 0 {
+		// Step 6a: Automatic database backup before any migration. Migrations
+		// run while the old code still serves traffic: if anything fails
+		// afterwards, the container rollback does NOT roll the schema back —
+		// the dump is the only safety net.
+		if hasMigrationHook && projectCfg.Database.IsManaged() && databaseURL != "" {
+			PrintInfo("Backing up database before migration...")
+			backupPath, err := deploy.BackupManagedDatabase(ctx, client, projectCfg, databaseURL, deployTag)
+			if err != nil {
+				if !deployForce {
+					PrintWarning("Database backup failed, rolling back...")
+					rollbackNewContainer(ctx, client, state)
+					return fmt.Errorf("database backup failed (use --force to deploy without a backup): %w", err)
+				}
+				PrintWarning("Database backup failed but continuing (--force): %v", err)
+			} else {
+				dbBackupPath = backupPath
+				PrintSuccess("Database backup: %s", backupPath)
+			}
+		}
+
 		PrintInfo("Running pre-deploy hooks...")
 		state.Phase = deploy.PhasePreDeployHooks
+		migrationAttempted = hasMigrationHook
 		if err := runDeployHooks(ctx, client, state.TempContainerName, projectCfg.Deploy.Hooks.PreDeploy); err != nil {
 			if !deployForce {
 				PrintWarning("Pre-deploy hooks failed, rolling back...")
 				rollbackNewContainer(ctx, client, state)
+				if hasMigrationHook {
+					warnDatabaseMigrationRollback("The migration may have been partially applied (non-transactional DDL on MySQL/MariaDB leaves a partial schema).", dbBackupPath)
+				}
 				return fmt.Errorf("pre-deploy hooks failed: %w", err)
 			}
 			PrintWarning("Pre-deploy hooks failed but continuing (--force)")
 		}
 
 		// Check for empty migrations if migration hook was run
-		if deploy.HasMigrationHook(projectCfg.Deploy.Hooks.PreDeploy) {
+		if hasMigrationHook {
 			checkAndWarnMigrationState(ctx, client, state.TempContainerName)
 		}
 	}
@@ -225,6 +252,9 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			if !deployForce {
 				PrintWarning("Health check failed, rolling back...")
 				rollbackNewContainer(ctx, client, state)
+				if migrationAttempted {
+					warnDatabaseMigrationRollback("The database was already migrated during this deploy.", dbBackupPath)
+				}
 				return fmt.Errorf("deployment failed health check: %w", err)
 			}
 			PrintWarning("Health check failed but continuing (--force)")
@@ -238,6 +268,9 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	state.Phase = deploy.PhaseSwapContainers
 	if err := swapContainers(ctx, client, projectCfg.Name, remoteAppPath, deployTag, state.TempContainerName, state.OldContainerExists); err != nil {
 		rollbackNewContainer(ctx, client, state)
+		if migrationAttempted {
+			warnDatabaseMigrationRollback("The database was already migrated during this deploy.", dbBackupPath)
+		}
 		return fmt.Errorf("swap failed: %w", err)
 	}
 
@@ -606,6 +639,20 @@ func swapContainerNames(ctx context.Context, client ssh.Executor, appName, tempC
 }
 
 // rollbackNewContainer removes the temporary new container, leaving the old one intact.
+// warnDatabaseMigrationRollback tells the user that rolling back the code
+// does not roll back the database schema — the previous version now runs on
+// the new schema, and the pre-migration dump is the only safety net.
+func warnDatabaseMigrationRollback(situation, backupPath string) {
+	PrintWarning("%s Rolling back the code may not be enough: the previous version now runs on the migrated schema.", situation)
+	if backupPath != "" {
+		PrintWarning("Database backup taken before the migration: %s", backupPath)
+		PrintWarning("Restore it if needed, e.g.: gunzip -c <backup> | docker exec -i <app>-db psql -U <user> <db>  (or mysql for MySQL)")
+	} else {
+		PrintWarning("No automatic backup was taken (the database is not managed by FrankenDeploy)")
+	}
+	PrintWarning("Tip: write backward-compatible migrations (expand/contract) so a code rollback stays safe")
+}
+
 func rollbackNewContainer(ctx context.Context, client ssh.Executor, state *deploy.DeployState) {
 	actions := state.RollbackActions()
 	for _, action := range actions {
