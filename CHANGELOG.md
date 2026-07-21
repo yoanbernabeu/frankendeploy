@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-21
+
+This release closes the second P1 wave of the production-readiness audit, focused on security and robustness: SSH authentication that matches OpenSSH expectations, a production Docker image that fails at build time instead of at the first request, and secrets that never end up world-readable. All changes were validated live on a real VPS.
+
+### Added
+
+- **SSH Agent & Encrypted Keys**: Authentication now tries ssh-agent first (`SSH_AUTH_SOCK`), then the key file; passphrase-protected keys are fully supported with a hidden prompt (asked at most once, skipped when the agent already holds the key), and `server add` no longer silently skips them (#78) - @yoanbernabeu
+- **Trust-On-First-Use**: The first connection to a new server shows the host key SHA256 fingerprint with an OpenSSH-style confirmation and records it in `known_hosts` — no more manual `ssh` required before using FrankenDeploy (#78) - @yoanbernabeu
+- **Secrets via stdin**: `env set <server> KEY --from-stdin` reads the value from a hidden prompt or a pipe (`openssl rand -hex 32 | frankendeploy env set prod APP_SECRET --from-stdin`), keeping secrets out of shell history (#80) - @yoanbernabeu
+- **Configurable Node Version**: The asset build stage uses `node:22-slim` by default (Node 20 EOL April 2026), configurable via `assets.node_version` (#79) - @yoanbernabeu
+
+### Fixed
+
+- **Host Key Errors**: A changed server key (reinstalled VPS — or a MITM) now fails immediately with the exact `ssh-keygen -R <host>` command instead of 3 retries burying a cryptic error; authentication failures are no longer retried either (#78) - @yoanbernabeu
+- **Silent Build Failures**: The production image ran `composer post-install-cmd || true`, masking any failure until the first HTTP request in production; scripts now fail the build, followed by an explicit `cache:clear` + `cache:warmup` (#79) - @yoanbernabeu
+- **Production OPcache**: The image kept dev-oriented defaults (`validate_timestamps=1`, re-stat on every request); the prod stage now ships tuned settings and `opcache.preload` when `config/preload.php` exists (#79) - @yoanbernabeu
+- **Image Size**: A whole-tree `chown -R` layer duplicated every file in the image; ownership is now set at `COPY --chown` time (#79) - @yoanbernabeu
+- **App-Level Health Check**: The container `HEALTHCHECK` probed the Caddy admin endpoint (proving only that Caddy was up); it now probes the application on `healthcheck_path`, making Docker health and `env --reload` waits meaningful (#79) - @yoanbernabeu
+- **Env File Corruption**: Values containing double quotes corrupted `.env.local` on write, and unsorted writes reordered the file every time; content is now sorted with proper escaping and lossless round-trip (#80) - @yoanbernabeu
+
+### Security
+
+- **World-Readable Secrets**: `env set`/`push`/`remove` left `.env.local` with the server umask (typically 644); every env write now goes through a single writer enforcing `chmod 600` and container-user ownership (#80) - @yoanbernabeu
+- **Secrets in Logs**: Verbose command logging only masked 4 hardcoded patterns — `MAILER_DSN`, `*_TOKEN`, `*_API_KEY` and others were logged in clear; masking now covers any assignment whose key matches the shared sensitive-key list, also used by `env list` (#80) - @yoanbernabeu
+- **Composer Superuser Flag**: `COMPOSER_ALLOW_SUPERUSER=1` no longer persists as an ENV in the final image (#79) - @yoanbernabeu
+
 ## [0.10.0] - 2026-07-20
 
 This release closes the "first contact" wave of the production-readiness audit: every fix targets a situation where a first-time user was left blocked or misled. All changes were validated live on a real VPS.
@@ -120,7 +146,8 @@ This release closes every P0 finding from the production-readiness audit. All fi
 
 Initial public release with core deployment features.
 
-[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.8.0...v0.8.1
