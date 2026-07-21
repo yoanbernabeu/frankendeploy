@@ -5,12 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
-	"github.com/yoanbernabeu/frankendeploy/internal/constants"
-	"github.com/yoanbernabeu/frankendeploy/internal/security"
 	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
 )
 
@@ -45,15 +42,11 @@ func CheckEnvVars(ctx context.Context, client ssh.Executor, cfg *config.ProjectC
 		Generated: make(map[string]string),
 	}
 
-	// Get the env file path
-	envFile := constants.AppEnvFilePath(cfg.Name)
-
 	// Read existing env variables
-	execResult, err := client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
+	existingVars, err := ReadEnvVars(ctx, client, cfg.Name)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read env file: %w", err)
+		return nil, err
 	}
-	existingVars := parseEnvContent(execResult.Stdout)
 
 	// Get framework requirements (default to Symfony)
 	requirements := FrameworkEnvRequirements["symfony"]
@@ -144,48 +137,16 @@ func SaveGeneratedSecrets(ctx context.Context, client ssh.Executor, appName stri
 		return nil
 	}
 
-	envFile := constants.AppEnvFilePath(appName)
-
-	// Ensure directory exists
-	mkdirCmd := fmt.Sprintf("mkdir -p $(dirname %s)", envFile)
-	if _, err := client.Exec(ctx, mkdirCmd); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
-
-	// Read existing env file
-	result, err := client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
+	// Read existing env file and merge new secrets
+	existingVars, err := ReadEnvVars(ctx, client, appName)
 	if err != nil {
-		return fmt.Errorf("failed to read env file: %w", err)
+		return err
 	}
-	existingVars := parseEnvContent(result.Stdout)
-
-	// Merge new secrets
 	for key, value := range secrets {
 		existingVars[key] = value
 	}
 
-	// Write back
-	newContent := buildEnvContent(existingVars)
-	delim, err := security.GenerateHeredocDelimiter("ENVEOF")
-	if err != nil {
-		return fmt.Errorf("failed to generate delimiter: %w", err)
-	}
-	writeCmd := fmt.Sprintf("cat > %s << '%s'\n%s%s", envFile, delim, newContent, delim)
-	if _, err := client.Exec(ctx, writeCmd); err != nil {
-		return fmt.Errorf("failed to write env file: %w", err)
-	}
-
-	// Fix permissions for container user
-	if _, err := client.Exec(ctx, fmt.Sprintf("sudo chown %s %s 2>/dev/null || true", constants.ContainerUser, envFile)); err != nil {
-		// Non-critical: permissions may need manual fix
-		_ = err
-	}
-	if _, err := client.Exec(ctx, fmt.Sprintf("sudo chmod 600 %s 2>/dev/null || true", envFile)); err != nil {
-		// Non-critical: permissions may need manual fix
-		_ = err
-	}
-
-	return nil
+	return WriteEnvVars(ctx, client, appName, existingVars)
 }
 
 // FormatEnvCheckError formats an error message with commands to run
@@ -217,48 +178,3 @@ func FormatEnvCheckError(missing []EnvRequirement, serverName string) string {
 	return sb.String()
 }
 
-// parseEnvContent parses .env file content into a map
-func parseEnvContent(content string) map[string]string {
-	vars := make(map[string]string)
-	lines := strings.Split(content, "\n")
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		// Skip empty lines and comments
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		// Parse KEY=value
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) == 2 {
-			key := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
-			// Remove quotes if present
-			value = strings.Trim(value, "\"'")
-			vars[key] = value
-		}
-	}
-
-	return vars
-}
-
-// buildEnvContent builds .env file content from a map.
-// Keys are sorted alphabetically so repeated writes produce stable diffs.
-func buildEnvContent(vars map[string]string) string {
-	keys := make([]string, 0, len(vars))
-	for k := range vars {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	lines := make([]string, 0, len(keys))
-	for _, key := range keys {
-		value := vars[key]
-		// Quote values with spaces or special characters
-		if strings.ContainsAny(value, " \t\n\"'") {
-			value = fmt.Sprintf("\"%s\"", value)
-		}
-		lines = append(lines, fmt.Sprintf("%s=%s", key, value))
-	}
-	return strings.Join(lines, "\n") + "\n"
-}

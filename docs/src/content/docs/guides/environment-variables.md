@@ -22,6 +22,18 @@ frankendeploy env set prod MAILER_DSN="smtp://..." --reload
 
 Without `--reload`, changes take effect on the next deployment.
 
+### Secrets: use `--from-stdin`
+
+Passing a secret as `KEY=value` leaves it in your shell history. With `--from-stdin`, the value never touches the history:
+
+```bash
+# Interactive: hidden prompt
+frankendeploy env set prod APP_SECRET --from-stdin
+
+# Scripted: pipe the value
+openssl rand -hex 32 | frankendeploy env set prod APP_SECRET --from-stdin
+```
+
 ## Listing Variables
 
 ```bash
@@ -94,7 +106,9 @@ For Symfony applications, you typically need:
 ## Security Notes
 
 - Variables are stored in `/opt/frankendeploy/apps/<app>/shared/.env.local`
+- Every write (`env set`, `env push`, `env remove`, deploy-generated secrets) enforces `chmod 600` on the file — secrets are never left world-readable
 - The file is mounted read-only into containers
+- Sensitive values are masked in `env list` output and in verbose command logs (same detection list for both)
 - Never commit `.env.prod.backup` files to git
 - Use strong, unique secrets for production
 
