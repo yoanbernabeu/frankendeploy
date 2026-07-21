@@ -7,9 +7,9 @@ import (
 
 // Base paths for FrankenDeploy on the server
 const (
-	BasePath    = "/opt/frankendeploy"
-	AppsDir     = BasePath + "/apps"
-	CaddyDir    = BasePath + "/caddy"
+	BasePath     = "/opt/frankendeploy"
+	AppsDir      = BasePath + "/apps"
+	CaddyDir     = BasePath + "/caddy"
 	CaddyAppsDir = CaddyDir + "/apps"
 	CaddyLogsDir = CaddyDir + "/logs"
 )
@@ -38,6 +38,15 @@ const (
 const (
 	DefaultKeepReleases = 5
 	DefaultCertEmail    = "admin@localhost"
+)
+
+// Log rotation for every container FrankenDeploy starts or generates:
+// unbounded json-file logs can fill a small VPS disk on their own.
+const (
+	LogMaxSize = "10m"
+	LogMaxFile = "3"
+	// DockerLogOptions is the ready-to-use docker run fragment.
+	DockerLogOptions = "--log-driver json-file --log-opt max-size=" + LogMaxSize + " --log-opt max-file=" + LogMaxFile
 )
 
 // AppBasePath returns the base path for an application on the server.

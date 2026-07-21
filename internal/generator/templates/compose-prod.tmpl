@@ -34,6 +34,17 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ logMaxSize }}"
+        max-file: "{{ logMaxFile }}"
+{{- if .Deploy.MemoryLimit }}
+    mem_limit: {{ .Deploy.MemoryLimit }}
+{{- end }}
+{{- if .Deploy.CPULimit }}
+    cpus: {{ .Deploy.CPULimit }}
+{{- end }}
     labels:
       - "app.name={{ .Name }}"
       - "app.version=${TAG:-latest}"
@@ -64,9 +75,11 @@ services:
 {{- else if eq .Database.Driver "mysql" }}
     image: mysql:{{ .Database.Version }}
     environment:
-      MYSQL_ROOT_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD is required}
+      # Root gets a random one-time password: the app password must not
+      # double as the root password
+      MYSQL_RANDOM_ROOT_PASSWORD: "1"
       MYSQL_USER: ${DATABASE_USER:-{{ .Name }}}
-      MYSQL_PASSWORD: ${DATABASE_PASSWORD}
+      MYSQL_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD is required}
       MYSQL_DATABASE: ${DATABASE_NAME:-{{ .Name }}}
     volumes:
       - db_data:/var/lib/mysql
@@ -77,6 +90,11 @@ services:
       retries: 5
 {{- end }}
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ logMaxSize }}"
+        max-file: "{{ logMaxFile }}"
     networks:
       - {{ networkName }}
 {{- end }}

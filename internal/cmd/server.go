@@ -455,6 +455,7 @@ CADDYEOF`, constants.CaddyDir, mainConfig)
 		--name caddy \
 		--network %s \
 		--restart unless-stopped \
+		`+constants.DockerLogOptions+` \
 		-p 80:80 \
 		-p 443:443 \
 		-p 443:443/udp \

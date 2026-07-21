@@ -139,6 +139,21 @@ func ValidateProjectConfig(config *ProjectConfig) ValidationErrors {
 		}
 	}
 
+	// Both limits flow into docker run command lines: strict formats only
+	if config.Deploy.MemoryLimit != "" && !memoryLimitRegex.MatchString(config.Deploy.MemoryLimit) {
+		errors = append(errors, ValidationError{
+			Field:   "deploy.memory_limit",
+			Message: "invalid memory limit (Docker format: a number with optional b/k/m/g suffix, e.g. 512m, 1g)",
+		})
+	}
+
+	if config.Deploy.CPULimit != "" && !cpuLimitRegex.MatchString(config.Deploy.CPULimit) {
+		errors = append(errors, ValidationError{
+			Field:   "deploy.cpu_limit",
+			Message: "invalid CPU limit (a decimal number, e.g. 0.5, 2)",
+		})
+	}
+
 	for key := range config.Env.Dev {
 		if err := security.ValidateEnvKey(key); err != nil {
 			errors = append(errors, ValidationError{
@@ -199,6 +214,13 @@ func isValidProjectName(name string) bool {
 // Kept forward-compatible so new PHP releases (8.10, 8.20, …) don't require
 // a config/validator update before they can be used.
 var phpVersionRegex = regexp.MustCompile(`^8\.([2-9]|[1-9]\d)$`)
+
+// memoryLimitRegex: Docker memory format (number + optional b/k/m/g suffix).
+// Flows into docker run command lines, so strict matching only.
+var memoryLimitRegex = regexp.MustCompile(`^[0-9]+[bBkKmMgG]?$`)
+
+// cpuLimitRegex: decimal CPU count. Flows into docker run command lines.
+var cpuLimitRegex = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
 
 // IsValidPHPVersion reports whether the given version is an accepted PHP version.
 // This is the single source of truth used by both the config and generator layers.

@@ -20,7 +20,9 @@ services:
       - caddy_config:/config
     environment:
       # SECURITY: Use non-privileged port {{ appPort }} for non-root execution
-      SERVER_NAME: "${SERVER_NAME:-{{ if .Deploy.Domain }}{{ .Deploy.Domain }}{{ else }}localhost{{ end }}, :{{ appPort }}}"
+      # Never default to the production domain here: Caddy would attempt real
+      # Let's Encrypt issuance from the local machine
+      SERVER_NAME: "${SERVER_NAME:-localhost, :{{ appPort }}}"
       APP_ENV: dev
       APP_DEBUG: "1"
 {{- if .Database.Driver }}
@@ -37,6 +39,11 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "{{ logMaxSize }}"
+        max-file: "{{ logMaxFile }}"
 {{- if or (eq .Database.Driver "pgsql") (eq .Database.Driver "mysql") }}
     depends_on:
       database:
@@ -52,7 +59,8 @@ services:
       POSTGRES_PASSWORD: {{ .DevDBPassword }}
       POSTGRES_DB: {{ .DevDBName }}
     ports:
-      - "5432:5432"
+      # Bind to localhost only: no reason to expose the dev DB on the LAN
+      - "127.0.0.1:5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
@@ -72,7 +80,8 @@ services:
       MYSQL_PASSWORD: {{ .DevDBPassword }}
       MYSQL_DATABASE: {{ .DevDBName }}
     ports:
-      - "3306:3306"
+      # Bind to localhost only: no reason to expose the dev DB on the LAN
+      - "127.0.0.1:3306:3306"
     volumes:
       - db_data:/var/lib/mysql
     healthcheck:
@@ -84,8 +93,8 @@ services:
 
 {{- if .HasMailer }}
 
-  mailhog:
-    image: mailhog/mailhog
+  mailpit:
+    image: axllent/mailpit
     ports:
       - "1025:1025"
       - "8025:8025"
@@ -94,7 +103,7 @@ services:
 {{- if .HasMessenger }}
 
   rabbitmq:
-    image: rabbitmq:3-management-alpine
+    image: rabbitmq:4-management-alpine
     ports:
       - "5672:5672"
       - "15672:15672"

@@ -148,7 +148,11 @@ deploy:
       - php bin/console doctrine:migrations:migrate --no-interaction
     post_deploy:                # Commands after deployment
       - php bin/console cache:warmup
+  memory_limit: 512m            # Optional: cap the app container memory
+  cpu_limit: "1.5"              # Optional: cap the app container CPUs
 ```
+
+**Log rotation** is always on: every container FrankenDeploy starts (app, worker, database, Caddy) uses the `json-file` driver capped at 10 MB × 3 files, so container logs can never fill the server disk. Optional `memory_limit` / `cpu_limit` protect the VPS from a leaking or runaway app container — with 0 downtime deploys, the limits apply from the next deploy.
 
 ### `env`
 

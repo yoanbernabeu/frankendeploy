@@ -73,9 +73,9 @@ type DockerfileConfig struct {
 
 // DeployConfig holds deployment configuration
 type DeployConfig struct {
-	Domain          string   `yaml:"domain,omitempty"`
-	HealthcheckPath string   `yaml:"healthcheck_path,omitempty"`
-	HealthcheckHost string   `yaml:"healthcheck_host,omitempty"`
+	Domain          string `yaml:"domain,omitempty"`
+	HealthcheckPath string `yaml:"healthcheck_path,omitempty"`
+	HealthcheckHost string `yaml:"healthcheck_host,omitempty"`
 	// HealthcheckTimeout is the overall health check window in seconds (0 = default).
 	HealthcheckTimeout int `yaml:"healthcheck_timeout,omitempty"`
 	// HealthcheckRetries is the maximum number of attempts (0 = default).
@@ -86,6 +86,12 @@ type DeployConfig struct {
 	SharedFiles         []string `yaml:"shared_files,omitempty"`
 	SharedDirs          []string `yaml:"shared_dirs,omitempty"`
 	Hooks               Hooks    `yaml:"hooks,omitempty"`
+	// MemoryLimit caps the app container memory (Docker format: 512m, 1g).
+	// Empty means no limit.
+	MemoryLimit string `yaml:"memory_limit,omitempty"`
+	// CPULimit caps the app container CPUs (e.g. "0.5", "2"). Empty means
+	// no limit.
+	CPULimit string `yaml:"cpu_limit,omitempty"`
 }
 
 // Hooks holds deployment hook commands

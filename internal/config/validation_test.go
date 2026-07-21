@@ -437,3 +437,48 @@ func TestValidateServerConfig(t *testing.T) {
 		})
 	}
 }
+
+// Tests for issue #53: deploy.memory_limit / deploy.cpu_limit validation.
+
+func TestValidateProjectConfig_ResourceLimits(t *testing.T) {
+	valid := [][2]string{
+		{"512m", "1"}, {"1g", "0.5"}, {"256M", "2.25"}, {"1073741824", "4"},
+	}
+	for _, pair := range valid {
+		cfg := &ProjectConfig{
+			Name: "myapp",
+			PHP:  PHPConfig{Version: "8.3"},
+			Deploy: DeployConfig{
+				MemoryLimit: pair[0],
+				CPULimit:    pair[1],
+			},
+		}
+		if errs := ValidateProjectConfig(cfg); errs.HasErrors() {
+			t.Errorf("limits (%q, %q) should be valid: %v", pair[0], pair[1], errs)
+		}
+	}
+
+	invalidMemory := []string{"abc", "512 m", "512m; rm -rf /", "-512m", "512mb", "$(evil)"}
+	for _, mem := range invalidMemory {
+		cfg := &ProjectConfig{
+			Name:   "myapp",
+			PHP:    PHPConfig{Version: "8.3"},
+			Deploy: DeployConfig{MemoryLimit: mem},
+		}
+		if errs := ValidateProjectConfig(cfg); !errs.HasErrors() {
+			t.Errorf("memory_limit %q should be rejected", mem)
+		}
+	}
+
+	invalidCPU := []string{"abc", "1,5", "1.5; evil", "-1", "1.5 2"}
+	for _, cpu := range invalidCPU {
+		cfg := &ProjectConfig{
+			Name:   "myapp",
+			PHP:    PHPConfig{Version: "8.3"},
+			Deploy: DeployConfig{CPULimit: cpu},
+		}
+		if errs := ValidateProjectConfig(cfg); !errs.HasErrors() {
+			t.Errorf("cpu_limit %q should be rejected", cpu)
+		}
+	}
+}
