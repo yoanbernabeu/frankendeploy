@@ -3,6 +3,7 @@ package ssh
 import (
 	"bytes"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // SSHKeyInfo contains information about an SSH key
@@ -122,6 +122,10 @@ func ValidateSSHKey(path string) (*SSHKeyInfo, error) {
 
 // isPassphraseError checks if the error indicates a passphrase-protected key
 func isPassphraseError(err error) bool {
+	var missingErr *ssh.PassphraseMissingError
+	if errors.As(err, &missingErr) {
+		return true
+	}
 	errStr := err.Error()
 	return strings.Contains(errStr, "passphrase") ||
 		strings.Contains(errStr, "encrypted") ||
@@ -163,26 +167,26 @@ func detectKeyType(data []byte) string {
 	return "unknown"
 }
 
-// TryConnect attempts to connect to a server with a specific key
-// Returns nil on success, error on failure
+// TryConnect attempts to connect to a server with a specific key file
+// (encrypted keys prompt for their passphrase). The ssh-agent is deliberately
+// not used here: this function validates one specific key.
+// Returns nil on success, error on failure.
 func TryConnect(host, user string, port int, keyPath string) error {
 	if port == 0 {
 		port = 22
 	}
 
-	// Load the private key
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
 		return fmt.Errorf("failed to read key: %w", err)
 	}
 
-	signer, err := ssh.ParsePrivateKey(keyData)
+	signer, err := parsePrivateKeyWithPrompt(keyData, keyPath, nil)
 	if err != nil {
-		return fmt.Errorf("failed to parse key: %w", err)
+		return err
 	}
 
-	// Get host key callback
-	hostKeyCallback, err := getHostKeyCallback(host, user, port)
+	hostKeyCallback, err := ResolveHostKeyCallback(DefaultHostKeyPrompt)
 	if err != nil {
 		return err
 	}
@@ -199,43 +203,9 @@ func TryConnect(host, user string, port int, keyPath string) error {
 	addr := fmt.Sprintf("%s:%d", host, port)
 	client, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
-		return fmt.Errorf("connection failed: %w", err)
+		return classifyConnError(addr, err)
 	}
 	client.Close()
 
 	return nil
-}
-
-// getHostKeyCallback returns the host key callback for connection testing
-func getHostKeyCallback(host, user string, port int) (ssh.HostKeyCallback, error) {
-	// Check for CI/CD environment variables first
-	if os.Getenv("FRANKENDEPLOY_SKIP_HOST_KEY_CHECK") == "true" {
-		return ssh.InsecureIgnoreHostKey(), nil
-	}
-
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("cannot determine home directory: %w", err)
-	}
-
-	knownHostsPath := filepath.Join(homeDir, ".ssh", "known_hosts")
-
-	if _, err := os.Stat(knownHostsPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("SSH known_hosts file not found at %s. "+
-			"Please connect to the server manually first with: ssh %s@%s -p %d\n"+
-			"For CI/CD, set FRANKENDEPLOY_SKIP_HOST_KEY_CHECK=true",
-			knownHostsPath, user, host, port)
-	}
-
-	callback, err := newKnownHostsCallback(knownHostsPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read known_hosts: %w", err)
-	}
-
-	return callback, nil
-}
-
-// newKnownHostsCallback creates a host key callback from a known_hosts file
-func newKnownHostsCallback(path string) (ssh.HostKeyCallback, error) {
-	return knownhosts.New(path)
 }
