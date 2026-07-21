@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-21
+
+This release makes long-running servers sustainable: the database gets a safety net before every migration, and neither Docker images nor container logs can fill the VPS disk anymore. All changes were validated live on a real VPS (managed PostgreSQL, real Doctrine migrations).
+
+### Added
+
+- **Automatic Database Backup Before Migrations**: with a managed database, any `pre_deploy` hook containing `doctrine:migrations:migrate` first dumps the database (`pg_dump` / `mysqldump --single-transaction`) gzipped into `shared/backups/`, chmod 600, verified non-empty, with retention aligned on `keep_releases`; a failed backup aborts the deploy (#81) - @yoanbernabeu
+- **Honest Post-Migration Rollback**: when a rollback happens after the migration ran (failed health check, swap, or partial hook), the CLI now states explicitly that the schema was NOT rolled back with the code, prints the backup path, a restore one-liner, and the backward-compatible-migrations tip (#81) - @yoanbernabeu
+- **Docker Image Pruning**: images whose tag left the `keep_releases` window are removed after each deploy (never forced: an image still used by a container survives); dangling layers are pruned after remote builds — previously ~1 GB per deploy accumulated forever, filling a 20-40 GB VPS in 10-30 deploys (#82) - @yoanbernabeu
+- **Log Rotation Everywhere**: every container FrankenDeploy starts or generates (app, worker, managed database, Caddy, compose services) caps its json-file logs at 10 MB × 3 files (#83) - @yoanbernabeu
+- **Resource Limits**: optional `deploy.memory_limit` / `deploy.cpu_limit` applied to the app container in both compose-prod and the deploy `docker run`, with strict format validation (#83) - @yoanbernabeu
+
+### Fixed
+
+- **Leftover Image Tar**: with local builds, the image tar on the server is now removed even when `docker load` fails (previously 500 MB+ per failed deploy stayed in `/tmp`) (#82) - @yoanbernabeu
+- **Dev SERVER_NAME**: the dev compose no longer defaults `SERVER_NAME` to the production domain, which triggered real Let's Encrypt issuance attempts from the local machine (#83) - @yoanbernabeu
+- **Dev Stack Refresh**: archived `mailhog/mailhog` (no arm64 image) replaced by `axllent/mailpit`; EOL `rabbitmq:3` bumped to `rabbitmq:4` (#83) - @yoanbernabeu
+
+### Security
+
+- **Dev Database Exposure**: dev compose database ports now bind to `127.0.0.1` instead of every interface (#83) - @yoanbernabeu
+- **MySQL Root Password**: the prod compose no longer reuses the app password as the MySQL root password (`MYSQL_RANDOM_ROOT_PASSWORD=1`) (#83) - @yoanbernabeu
+
 ## [0.11.0] - 2026-07-21
 
 This release closes the second P1 wave of the production-readiness audit, focused on security and robustness: SSH authentication that matches OpenSSH expectations, a production Docker image that fails at build time instead of at the first request, and secrets that never end up world-readable. All changes were validated live on a real VPS.
@@ -146,7 +169,8 @@ This release closes every P0 finding from the production-readiness audit. All fi
 
 Initial public release with core deployment features.
 
-[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.8.1...v0.9.0

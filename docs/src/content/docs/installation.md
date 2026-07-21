@@ -34,7 +34,7 @@ Download the binary for your platform from the [GitHub Releases](https://github.
 
 ### Linux (amd64)
 ```bash
-VERSION=0.11.0  # See https://github.com/yoanbernabeu/frankendeploy/releases/latest
+VERSION=0.12.0  # See https://github.com/yoanbernabeu/frankendeploy/releases/latest
 curl -LO https://github.com/yoanbernabeu/frankendeploy/releases/download/v${VERSION}/frankendeploy_${VERSION}_linux_amd64.tar.gz
 tar -xzf frankendeploy_${VERSION}_linux_amd64.tar.gz
 sudo mv frankendeploy /usr/local/bin/
@@ -42,7 +42,7 @@ sudo mv frankendeploy /usr/local/bin/
 
 ### macOS (Apple Silicon)
 ```bash
-VERSION=0.11.0  # See https://github.com/yoanbernabeu/frankendeploy/releases/latest
+VERSION=0.12.0  # See https://github.com/yoanbernabeu/frankendeploy/releases/latest
 curl -LO https://github.com/yoanbernabeu/frankendeploy/releases/download/v${VERSION}/frankendeploy_${VERSION}_darwin_arm64.tar.gz
 tar -xzf frankendeploy_${VERSION}_darwin_arm64.tar.gz
 sudo mv frankendeploy /usr/local/bin/
