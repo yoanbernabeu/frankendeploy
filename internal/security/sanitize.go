@@ -51,14 +51,31 @@ var (
 	// Allows: alphanumeric, underscores, hyphens, dots, forward slashes (no ..)
 	sharedDirRegex = regexp.MustCompile(`^[a-zA-Z0-9_.-]+(/[a-zA-Z0-9_.-]+)*$`)
 
-	// sensitivePatterns used by SanitizeCommandForLog to mask secrets
-	sensitiveLogPatterns = []string{
-		"DATABASE_URL=",
-		"POSTGRES_PASSWORD=",
-		"MYSQL_PASSWORD=",
-		"MYSQL_ROOT_PASSWORD=",
+	// sensitiveKeyPatterns is the single list of substrings marking an
+	// environment variable key as sensitive. Used both for masking values
+	// in logs (SanitizeCommandForLog) and for masking display output
+	// (env list). Matched case-insensitively on the key.
+	sensitiveKeyPatterns = []string{
+		"SECRET", "PASSWORD", "PASS", "KEY", "TOKEN", "DSN", "DATABASE_URL",
 	}
+
+	// envAssignmentRegex finds KEY=value assignments in a command line so
+	// sensitive values can be masked before logging.
+	envAssignmentRegex = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)=`)
 )
+
+// IsSensitiveEnvKey reports whether an environment variable key likely
+// holds a secret (matched case-insensitively against the shared pattern
+// list).
+func IsSensitiveEnvKey(key string) bool {
+	keyUpper := strings.ToUpper(key)
+	for _, pattern := range sensitiveKeyPatterns {
+		if strings.Contains(keyUpper, pattern) {
+			return true
+		}
+	}
+	return false
+}
 
 // ValidateAppName validates an application name
 // Application names must be DNS-compatible for Docker container naming
@@ -223,7 +240,7 @@ func ValidateDockerCommand(command string) error {
 
 // ShellEscape escapes a string for safe use in shell commands by wrapping it
 // in single quotes and escaping any internal single quotes using the POSIX
-// pattern: ' → '\''
+// pattern: ' → '\”
 func ShellEscape(s string) string {
 	// Replace single quotes with the POSIX escape sequence: end quote, escaped quote, start quote
 	escaped := strings.ReplaceAll(s, "'", "'\\''")
@@ -290,32 +307,32 @@ func GenerateHeredocDelimiter(prefix string) (string, error) {
 
 // SanitizeCommandForLog masks sensitive values in commands before logging.
 // This prevents secrets from leaking into verbose output or log files.
+// Any KEY=value assignment whose key matches the shared sensitive-key list
+// (IsSensitiveEnvKey) has its value masked.
 func SanitizeCommandForLog(cmd string) string {
-	result := cmd
+	var sb strings.Builder
+	rest := cmd
 
-	// Mask sensitive environment variable values
-	for _, pattern := range sensitiveLogPatterns {
-		searchFrom := 0
-		for {
-			idx := strings.Index(result[searchFrom:], pattern)
-			if idx == -1 {
-				break
-			}
-			absIdx := searchFrom + idx
-			// Find the end of the value (next space or end of string)
-			valueStart := absIdx + len(pattern)
-			valueEnd := findValueEnd(result, valueStart)
-			masked := "****"
-			result = result[:valueStart] + masked + result[valueEnd:]
-			// Advance past the replacement to avoid infinite loop
-			searchFrom = valueStart + len(masked)
+	for {
+		loc := envAssignmentRegex.FindStringSubmatchIndex(rest)
+		if loc == nil {
+			sb.WriteString(rest)
+			break
 		}
+
+		key := rest[loc[2]:loc[3]]
+		sb.WriteString(rest[:loc[1]])
+		valueEnd := findValueEnd(rest, loc[1])
+		if IsSensitiveEnvKey(key) {
+			sb.WriteString("****")
+		} else {
+			sb.WriteString(rest[loc[1]:valueEnd])
+		}
+		rest = rest[valueEnd:]
 	}
 
 	// Mask -p<password> pattern (MySQL password flag)
-	result = maskMySQLPasswordFlag(result)
-
-	return result
+	return maskMySQLPasswordFlag(sb.String())
 }
 
 // findValueEnd finds where a shell value ends (handles quoted and unquoted values)

@@ -254,13 +254,13 @@ func TestParseEnvContent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseEnvContent(tt.content)
+			result := ParseEnvContent(tt.content)
 			if len(result) != len(tt.expected) {
-				t.Errorf("parseEnvContent() returned %d items, expected %d", len(result), len(tt.expected))
+				t.Errorf("ParseEnvContent() returned %d items, expected %d", len(result), len(tt.expected))
 			}
 			for key, expectedValue := range tt.expected {
 				if result[key] != expectedValue {
-					t.Errorf("parseEnvContent()[%s] = %s, expected %s", key, result[key], expectedValue)
+					t.Errorf("ParseEnvContent()[%s] = %s, expected %s", key, result[key], expectedValue)
 				}
 			}
 		})
@@ -272,15 +272,15 @@ func TestBuildEnvContent(t *testing.T) {
 		"APP_ENV": "prod",
 	}
 
-	result := buildEnvContent(vars)
+	result := BuildEnvContent(vars)
 
 	if !strings.Contains(result, "APP_ENV=prod") {
-		t.Errorf("buildEnvContent() = %s, expected to contain APP_ENV=prod", result)
+		t.Errorf("BuildEnvContent() = %s, expected to contain APP_ENV=prod", result)
 	}
 
 	// Check it ends with newline
 	if !strings.HasSuffix(result, "\n") {
-		t.Error("buildEnvContent() should end with newline")
+		t.Error("BuildEnvContent() should end with newline")
 	}
 }
 
@@ -295,17 +295,17 @@ func TestBuildEnvContent_DeterministicOrdering(t *testing.T) {
 	}
 
 	// Calling buildEnvContent repeatedly must produce the exact same bytes.
-	first := buildEnvContent(vars)
+	first := BuildEnvContent(vars)
 	for i := 0; i < 20; i++ {
-		if got := buildEnvContent(vars); got != first {
-			t.Fatalf("buildEnvContent() is non-deterministic:\nfirst=%q\ngot  =%q", first, got)
+		if got := BuildEnvContent(vars); got != first {
+			t.Fatalf("BuildEnvContent() is non-deterministic:\nfirst=%q\ngot  =%q", first, got)
 		}
 	}
 
 	// Keys must appear in alphabetical order.
 	want := "APP_ENV=prod\nAPP_SECRET=abc\nDATABASE_URL=postgres://u:p@h/db\nZEBRA=z\n"
 	if first != want {
-		t.Errorf("buildEnvContent() = %q, want %q", first, want)
+		t.Errorf("BuildEnvContent() = %q, want %q", first, want)
 	}
 }
 

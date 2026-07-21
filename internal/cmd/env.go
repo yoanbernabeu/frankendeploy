@@ -3,15 +3,19 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
 	"github.com/yoanbernabeu/frankendeploy/internal/constants"
+	"github.com/yoanbernabeu/frankendeploy/internal/deploy"
 	"github.com/yoanbernabeu/frankendeploy/internal/security"
 	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
+	"golang.org/x/term"
 )
 
 var envCmd = &cobra.Command{
@@ -20,18 +24,27 @@ var envCmd = &cobra.Command{
 	Long:  `Commands to manage environment variables for your application on remote servers.`,
 }
 
-var envSetReload bool
+var (
+	envSetReload    bool
+	envSetFromStdin bool
+)
 
 var envSetCmd = &cobra.Command{
-	Use:   "set <server> <KEY=value>",
+	Use:   "set <server> <KEY=value | KEY --from-stdin>",
 	Short: "Set an environment variable",
 	Long: `Sets an environment variable on the server.
+
+For secrets, prefer --from-stdin: the value never appears in your shell
+history nor in the remote command line. Interactively, the value is asked
+with a hidden prompt; in scripts, it is read from stdin.
 
 Use --reload to apply changes immediately (restarts the container).
 Without --reload, changes take effect on next deployment.
 
 Example:
   frankendeploy env set prod DATABASE_URL="postgresql://user:pass@host/db"
+  frankendeploy env set prod APP_SECRET --from-stdin
+  openssl rand -hex 32 | frankendeploy env set prod APP_SECRET --from-stdin
   frankendeploy env set prod APP_SECRET="my-secret-key" --reload`,
 	Args: cobra.ExactArgs(2),
 	RunE: runEnvSet,
@@ -106,26 +119,18 @@ func init() {
 	envCmd.AddCommand(envPullCmd)
 
 	envSetCmd.Flags().BoolVar(&envSetReload, "reload", false, "Restart container to apply changes immediately")
+	envSetCmd.Flags().BoolVar(&envSetFromStdin, "from-stdin", false, "Read the value from stdin (keeps secrets out of shell history)")
 	envPushCmd.Flags().BoolVar(&envPushReload, "reload", false, "Restart container to apply changes immediately")
 }
 
 func runEnvSet(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	serverName := args[0]
-	keyValue := args[1]
 
-	// Parse KEY=value
-	parts := strings.SplitN(keyValue, "=", 2)
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid format, use KEY=value")
+	key, value, err := resolveEnvSetInput(args[1], envSetFromStdin, os.Stdin)
+	if err != nil {
+		return err
 	}
-	key, value := parts[0], parts[1]
-
-	// Validate environment variable key
-	if err := security.ValidateEnvKey(key); err != nil {
-		return fmt.Errorf("invalid environment variable key: %w", err)
-	}
-	_ = value // Value is not validated as it can contain any content
 
 	conn, err := ConnectToServer(serverName)
 	if err != nil {
@@ -133,36 +138,14 @@ func runEnvSet(cmd *cobra.Command, args []string) error {
 	}
 	defer conn.Client.Close()
 
-	envFile := constants.AppEnvFilePath(conn.Project.Name)
-
-	// Ensure directory exists
-	mkdirCmd := fmt.Sprintf("mkdir -p $(dirname %s)", envFile)
-	if _, err := conn.Client.Exec(ctx, mkdirCmd); err != nil {
-		PrintWarning("Could not create directory: %v", err)
-	}
-
-	// Read existing env file
-	result, err := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
+	// Read, update, write through the unified writer (chmod 600 + chown)
+	envVars, err := deploy.ReadEnvVars(ctx, conn.Client, conn.Project.Name)
 	if err != nil {
-		return fmt.Errorf("failed to read env file: %w", err)
+		return err
 	}
-	existingContent := result.Stdout
-
-	// Parse existing variables
-	envVars := parseEnvContent(existingContent)
-
-	// Set/update the variable
 	envVars[key] = value
-
-	// Write back
-	newContent := buildEnvContent(envVars)
-	delim, err := security.GenerateHeredocDelimiter("ENVEOF")
-	if err != nil {
-		return fmt.Errorf("failed to generate delimiter: %w", err)
-	}
-	writeCmd := fmt.Sprintf("cat > %s << '%s'\n%s%s", envFile, delim, newContent, delim)
-	if _, err := conn.Client.Exec(ctx, writeCmd); err != nil {
-		return fmt.Errorf("failed to write env file: %w", err)
+	if err := deploy.WriteEnvVars(ctx, conn.Client, conn.Project.Name, envVars); err != nil {
+		return err
 	}
 
 	PrintSuccess("Set %s on %s", key, serverName)
@@ -202,11 +185,18 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Environment variables for %s on %s:\n\n", conn.Project.Name, serverName)
 
-	envVars := parseEnvContent(result.Stdout)
-	for key, value := range envVars {
+	envVars := deploy.ParseEnvContent(result.Stdout)
+	keys := make([]string, 0, len(envVars))
+	for key := range envVars {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		value := envVars[key]
 		// Mask sensitive values
 		displayValue := value
-		if isSensitiveKey(key) && len(value) > 8 {
+		if security.IsSensitiveEnvKey(key) && len(value) > 8 {
 			displayValue = value[:4] + "****" + value[len(value)-4:]
 		}
 		fmt.Printf("  %s=%s\n", key, displayValue)
@@ -237,7 +227,7 @@ func runEnvGet(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read env file: %w", err)
 	}
-	envVars := parseEnvContent(result.Stdout)
+	envVars := deploy.ParseEnvContent(result.Stdout)
 
 	if value, ok := envVars[key]; ok {
 		fmt.Println(value)
@@ -264,13 +254,10 @@ func runEnvRemove(cmd *cobra.Command, args []string) error {
 	}
 	defer conn.Client.Close()
 
-	envFile := constants.AppEnvFilePath(conn.Project.Name)
-
-	result, err := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null", envFile))
+	envVars, err := deploy.ReadEnvVars(ctx, conn.Client, conn.Project.Name)
 	if err != nil {
-		return fmt.Errorf("failed to read env file: %w", err)
+		return err
 	}
-	envVars := parseEnvContent(result.Stdout)
 
 	if _, ok := envVars[key]; !ok {
 		return fmt.Errorf("variable %s not found", key)
@@ -278,14 +265,8 @@ func runEnvRemove(cmd *cobra.Command, args []string) error {
 
 	delete(envVars, key)
 
-	newContent := buildEnvContent(envVars)
-	delim, err := security.GenerateHeredocDelimiter("ENVEOF")
-	if err != nil {
-		return fmt.Errorf("failed to generate delimiter: %w", err)
-	}
-	writeCmd := fmt.Sprintf("cat > %s << '%s'\n%s%s", envFile, delim, newContent, delim)
-	if _, err := conn.Client.Exec(ctx, writeCmd); err != nil {
-		return fmt.Errorf("failed to write env file: %w", err)
+	if err := deploy.WriteEnvVars(ctx, conn.Client, conn.Project.Name, envVars); err != nil {
+		return err
 	}
 
 	PrintSuccess("Removed %s from %s", key, serverName)
@@ -328,36 +309,18 @@ func runEnvPush(cmd *cobra.Command, args []string) error {
 	}
 	defer conn.Client.Close()
 
-	envFile := constants.AppEnvFilePath(conn.Project.Name)
-
-	// Ensure directory exists
-	mkdirCmd := fmt.Sprintf("mkdir -p $(dirname %s)", envFile)
-	if _, err := conn.Client.Exec(ctx, mkdirCmd); err != nil {
-		PrintWarning("Could not create directory: %v", err)
-	}
-
-	// Read existing and merge
-	result, err := conn.Client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null || echo ''", envFile))
+	// Read existing and merge (new values override existing), then write
+	// through the unified writer (chmod 600 + chown)
+	existingVars, err := deploy.ReadEnvVars(ctx, conn.Client, conn.Project.Name)
 	if err != nil {
-		return fmt.Errorf("failed to read env file: %w", err)
+		return err
 	}
-	existingVars := parseEnvContent(result.Stdout)
-	newVars := parseEnvContent(string(content))
-
-	// Merge (new values override existing)
+	newVars := deploy.ParseEnvContent(string(content))
 	for key, value := range newVars {
 		existingVars[key] = value
 	}
-
-	// Write merged content
-	mergedContent := buildEnvContent(existingVars)
-	delim, err := security.GenerateHeredocDelimiter("ENVEOF")
-	if err != nil {
-		return fmt.Errorf("failed to generate delimiter: %w", err)
-	}
-	writeCmd := fmt.Sprintf("cat > %s << '%s'\n%s%s", envFile, delim, mergedContent, delim)
-	if _, err := conn.Client.Exec(ctx, writeCmd); err != nil {
-		return fmt.Errorf("failed to write env file: %w", err)
+	if err := deploy.WriteEnvVars(ctx, conn.Client, conn.Project.Name, existingVars); err != nil {
+		return err
 	}
 
 	PrintSuccess("Pushed %d variables from %s to %s", len(newVars), localFile, serverName)
@@ -406,42 +369,58 @@ func runEnvPull(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// parseEnvContent parses .env file content into a map
-func parseEnvContent(content string) map[string]string {
-	vars := make(map[string]string)
-	lines := strings.Split(content, "\n")
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		// Skip empty lines and comments
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+// resolveEnvSetInput turns the `env set` argument into a (key, value) pair.
+// With fromStdin, the argument is the bare key and the value is read from
+// stdin: a hidden prompt on a terminal, raw stdin otherwise — either way the
+// secret stays out of shell history and remote command lines.
+func resolveEnvSetInput(arg string, fromStdin bool, stdin *os.File) (string, string, error) {
+	if !fromStdin {
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) != 2 {
+			return "", "", fmt.Errorf("invalid format, use KEY=value (or KEY --from-stdin)")
 		}
-		// Parse KEY=value
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) == 2 {
-			key := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
-			// Remove quotes if present
-			value = strings.Trim(value, "\"'")
-			vars[key] = value
+		if err := security.ValidateEnvKey(parts[0]); err != nil {
+			return "", "", fmt.Errorf("invalid environment variable key: %w", err)
 		}
+		return parts[0], parts[1], nil
 	}
 
-	return vars
+	if strings.Contains(arg, "=") {
+		return "", "", fmt.Errorf("with --from-stdin, pass the key only (got %q)", arg)
+	}
+	if err := security.ValidateEnvKey(arg); err != nil {
+		return "", "", fmt.Errorf("invalid environment variable key: %w", err)
+	}
+
+	if term.IsTerminal(int(stdin.Fd())) {
+		fmt.Printf("Enter value for %s (input hidden): ", arg)
+		value, err := term.ReadPassword(int(stdin.Fd()))
+		fmt.Println()
+		if err != nil {
+			return "", "", fmt.Errorf("failed to read value: %w", err)
+		}
+		return arg, string(value), nil
+	}
+
+	value, err := readStdinValue(stdin)
+	if err != nil {
+		return "", "", err
+	}
+	return arg, value, nil
 }
 
-// buildEnvContent builds .env file content from a map
-func buildEnvContent(vars map[string]string) string {
-	var lines []string
-	for key, value := range vars {
-		// Quote values with spaces or special characters
-		if strings.ContainsAny(value, " \t\n\"'") {
-			value = fmt.Sprintf("\"%s\"", value)
-		}
-		lines = append(lines, fmt.Sprintf("%s=%s", key, value))
+// readStdinValue reads a piped value from stdin, trimming the trailing
+// newline that `echo` or `openssl rand` append.
+func readStdinValue(r io.Reader) (string, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return "", fmt.Errorf("failed to read value from stdin: %w", err)
 	}
-	return strings.Join(lines, "\n") + "\n"
+	value := strings.TrimRight(string(data), "\r\n")
+	if value == "" {
+		return "", fmt.Errorf("empty value on stdin")
+	}
+	return value, nil
 }
 
 // reloadContainer performs a rolling restart to apply env changes without
@@ -493,19 +472,4 @@ func reloadContainer(ctx context.Context, client ssh.Executor, cfg *config.Proje
 	}
 
 	return nil
-}
-
-// isSensitiveKey checks if a key likely contains sensitive data
-func isSensitiveKey(key string) bool {
-	sensitivePatterns := []string{
-		"SECRET", "PASSWORD", "PASS", "KEY", "TOKEN",
-		"DATABASE_URL", "MAILER_DSN", "API_KEY",
-	}
-	keyUpper := strings.ToUpper(key)
-	for _, pattern := range sensitivePatterns {
-		if strings.Contains(keyUpper, pattern) {
-			return true
-		}
-	}
-	return false
 }
