@@ -86,7 +86,6 @@ func templateFuncs() template.FuncMap {
 			return replacer.Replace(s)
 		},
 		"appPort":     func() string { return AppPort },
-		"metricsPort": func() string { return MetricsPort },
 		"devPort":     func() string { return DevExternalPort },
 		"defaultUID":  func() string { return DefaultUID },
 		"defaultGID":  func() string { return DefaultGID },

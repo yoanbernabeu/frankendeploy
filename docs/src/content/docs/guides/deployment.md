@@ -107,7 +107,7 @@ deploy:
   healthcheck_path: /health
 ```
 
-The default path is `/`. For **API Platform** projects, `init` detects the framework and sets the path to `/api` automatically — a pure API returns 404 on `/`, which would fail every health check. The same path is also used by Caddy's active health checks on the running container.
+The default path is `/`. For **API Platform** projects, `init` detects the framework and sets the path to `/api` automatically — a pure API returns 404 on `/`, which would fail every health check. The same path is also used by Caddy's active health checks on the running container **and by the Docker `HEALTHCHECK` baked into the generated image**, so `docker ps` health status reflects the application actually answering, not just the web server process being up.
 
 The check window is generous by default (90 seconds — a cold Symfony container needs time for opcache warmup and database wait) and tunable:
 

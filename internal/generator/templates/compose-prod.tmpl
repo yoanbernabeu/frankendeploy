@@ -29,7 +29,7 @@ services:
 {{- end }}
 {{- end }}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:{{ metricsPort }}/metrics"]
+      test: ["CMD", "curl", "-f", "http://localhost:{{ appPort }}{{ default "/" .Deploy.HealthcheckPath }}"]
       interval: 30s
       timeout: 10s
       retries: 3

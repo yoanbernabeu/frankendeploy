@@ -46,6 +46,9 @@ type AssetsConfig struct {
 	BuildTool    string `yaml:"build_tool,omitempty"`
 	BuildCommand string `yaml:"build_command,omitempty"`
 	OutputDir    string `yaml:"output_dir,omitempty"`
+	// NodeVersion is the Node.js major version for the asset build stage
+	// (default: 22)
+	NodeVersion string `yaml:"node_version,omitempty"`
 }
 
 // MessengerConfig holds Symfony Messenger worker configuration.

@@ -458,6 +458,16 @@ func TestIsRetryableConnError(t *testing.T) {
 			err:       fmt.Errorf("ssh: handshake failed: %w", &HostKeyUnknownError{Host: "example.com", Fingerprint: "SHA256:abc"}),
 			retryable: false,
 		},
+		{
+			name:      "unpromptable passphrase is not retryable",
+			err:       errors.New("ssh: handshake failed: key /k is passphrase-protected and no terminal is available to prompt"),
+			retryable: false,
+		},
+		{
+			name:      "wrong passphrase is not retryable",
+			err:       errors.New("ssh: handshake failed: failed to decrypt key /k (wrong passphrase?)"),
+			retryable: false,
+		},
 	}
 
 	for _, tt := range tests {

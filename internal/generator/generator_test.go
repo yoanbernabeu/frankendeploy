@@ -428,7 +428,7 @@ func TestDockerfileGenerator_Generate_NPMVite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to generate: %v", err)
 	}
-	if !strings.Contains(dockerfile, "FROM node:20-slim AS node_build") {
+	if !strings.Contains(dockerfile, "FROM node:22-slim AS node_build") {
 		t.Error("npm/Vite should have Node build stage")
 	}
 	if !strings.Contains(dockerfile, "COPY --from=node_build") {
@@ -457,7 +457,7 @@ func TestDockerfileGenerator_Generate_CustomAssetOutputDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to generate: %v", err)
 	}
-	want := "COPY --from=node_build /app/public/dist public/dist"
+	want := "COPY --from=node_build --link --chown=" + DefaultUID + ":" + DefaultGID + " /app/public/dist public/dist"
 	if !strings.Contains(dockerfile, want) {
 		t.Errorf("dockerfile should contain %q:\n%s", want, dockerfile)
 	}
@@ -596,8 +596,8 @@ func TestDockerfileGenerator_Generate_Constants(t *testing.T) {
 	if !strings.Contains(dockerfile, "ARG GID="+DefaultGID) {
 		t.Error("Dockerfile should use DefaultGID constant")
 	}
-	if !strings.Contains(dockerfile, "localhost:"+MetricsPort+"/metrics") {
-		t.Error("Dockerfile should use MetricsPort constant")
+	if !strings.Contains(dockerfile, "localhost:"+AppPort+"/") {
+		t.Error("Dockerfile healthcheck should use AppPort constant")
 	}
 }
 
@@ -804,8 +804,8 @@ func TestComposeGenerator_GenerateDev_HasHealthCheck(t *testing.T) {
 	if !strings.Contains(compose, "healthcheck:") {
 		t.Error("compose-dev should have a healthcheck for the app service")
 	}
-	if !strings.Contains(compose, "localhost:"+MetricsPort+"/metrics") {
-		t.Error("compose-dev healthcheck should use metrics port")
+	if !strings.Contains(compose, "localhost:"+AppPort+"/") {
+		t.Error("compose-dev healthcheck should probe the app port")
 	}
 }
 
@@ -854,7 +854,7 @@ func TestComposeGenerator_GenerateProd(t *testing.T) {
 		"test-app:${TAG:-latest}",
 		"expose:",
 		`"` + AppPort + `"`,
-		"localhost:" + MetricsPort + "/metrics",
+		"localhost:" + AppPort + "/",
 		NetworkName,
 		"app.domain=example.com",
 		DefaultUID + ":" + DefaultGID,

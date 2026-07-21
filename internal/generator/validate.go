@@ -17,6 +17,12 @@ var (
 	// assetOutputDirRegex: relative path, no traversal, safe chars only.
 	// Flows into a Dockerfile COPY line so must be sanitized.
 	assetOutputDirRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/-]*$`)
+	// nodeVersionRegex: numeric version only (e.g. 22, 22.11). Flows into a
+	// Dockerfile FROM line so must be sanitized.
+	nodeVersionRegex = regexp.MustCompile(`^[0-9]+(\.[0-9]+)*$`)
+	// healthPathRegex: absolute URL path, safe chars only. Flows into the
+	// Dockerfile HEALTHCHECK shell command and compose healthcheck test.
+	healthPathRegex = regexp.MustCompile(`^/[a-zA-Z0-9._/-]*$`)
 )
 
 // dockerfileInstructions are the valid Dockerfile instruction keywords
@@ -83,6 +89,26 @@ func ValidateDockerfileData(data DockerfileData) error {
 		return fmt.Errorf("invalid FrankenPHP version %q: only alphanumeric, dots, underscores, and hyphens allowed", data.FrankenPHPVersion)
 	}
 
+	if data.Assets != nil && data.Assets.NodeVersion != "" && !nodeVersionRegex.MatchString(data.Assets.NodeVersion) {
+		return fmt.Errorf("invalid assets node_version %q: must be numeric (e.g. 22)", data.Assets.NodeVersion)
+	}
+
+	if err := validateHealthcheckPath(data.HealthcheckPath); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateHealthcheckPath checks that a healthcheck path is a safe absolute
+// URL path (it flows into shell commands in the Dockerfile and compose files).
+func validateHealthcheckPath(path string) error {
+	if path == "" {
+		return nil
+	}
+	if !healthPathRegex.MatchString(path) {
+		return fmt.Errorf("invalid healthcheck_path %q: must start with / and contain only alphanumeric, dots, underscores, slashes, and hyphens", path)
+	}
 	return nil
 }
 
@@ -109,6 +135,10 @@ func ValidateComposeData(data ComposeData) error {
 	}
 	if err := validateEnvKeys(data.Env.Prod); err != nil {
 		return fmt.Errorf("compose data: env.prod: %w", err)
+	}
+
+	if err := validateHealthcheckPath(data.Deploy.HealthcheckPath); err != nil {
+		return fmt.Errorf("compose data: %w", err)
 	}
 
 	return nil
