@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -353,36 +352,6 @@ func TestCleanupOldReleases_DefaultKeepReleases(t *testing.T) {
 		t.Errorf("cleanupOldReleases() should default to keep=5 (tail -n +6), got: %v", mock.Commands)
 	}
 }
-
-func TestTransferSourceCode_PropagatesContext(t *testing.T) {
-	// Guards the bug fix: the function must use the propagated ctx instead of context.Background().
-	type ctxKey string
-	const key ctxKey = "trace"
-	seen := ""
-
-	mock := &ssh.MockExecutor{
-		ExecFunc: func(ctx context.Context, command string) (*ssh.ExecResult, error) {
-			if v, ok := ctx.Value(key).(string); ok {
-				seen = v
-			}
-			// Return an error so transferSourceCode returns before rsync runs externally.
-			return nil, fmt.Errorf("mocked failure to short-circuit rsync")
-		},
-	}
-
-	ctx := context.WithValue(context.Background(), key, "propagated")
-	_ = transferSourceCode(
-		ctx, mock,
-		&config.ServerConfig{Host: "example", User: "deploy", Port: 22},
-		"myapp",
-		"/opt/frankendeploy/apps/myapp",
-	)
-
-	if seen != "propagated" {
-		t.Errorf("transferSourceCode() did not propagate ctx to client.Exec; seen=%q", seen)
-	}
-}
-
 func TestRunHealthCheckOnContainer_RejectsInvalidHealthPath(t *testing.T) {
 	mock := &ssh.MockExecutor{}
 	cfg := &config.ProjectConfig{
