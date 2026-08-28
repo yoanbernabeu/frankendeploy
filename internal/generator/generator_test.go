@@ -1479,3 +1479,69 @@ func TestDefaultEntrypointData(t *testing.T) {
 		t.Errorf("expected DBWaitInterval=%d, got %d", DefaultDBWaitInterval, data.DBWaitInterval)
 	}
 }
+
+func TestDockerfileGenerator_WorkerMode_CopiesCaddyfile(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Name: "myapp",
+		PHP:  config.PHPConfig{Version: "8.3"},
+	}
+	cfg.FrankenPHP.Worker = true
+
+	gen := NewDockerfileGenerator(cfg)
+	out, err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !strings.Contains(out, "COPY --link Caddyfile /etc/caddy/Caddyfile") {
+		t.Errorf("worker mode must copy the generated Caddyfile into the image:\n%s", out)
+	}
+	// The copy must live in the prod stage, after the frankenphp_prod FROM line
+	prodIdx := strings.Index(out, "AS frankenphp_prod")
+	copyIdx := strings.Index(out, "COPY --link Caddyfile /etc/caddy/Caddyfile")
+	if copyIdx < prodIdx {
+		t.Error("Caddyfile copy must be in the prod stage (dev keeps classic mode)")
+	}
+}
+
+func TestDockerfileGenerator_ClassicMode_NoCaddyfileCopy(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Name: "myapp",
+		PHP:  config.PHPConfig{Version: "8.3"},
+	}
+
+	gen := NewDockerfileGenerator(cfg)
+	out, err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if strings.Contains(out, "COPY --link Caddyfile") {
+		t.Errorf("classic mode must rely on the image default Caddyfile:\n%s", out)
+	}
+}
+
+func TestGenerateCaddyfile_WorkerBlock(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Name: "myapp",
+		PHP:  config.PHPConfig{Version: "8.3"},
+	}
+	cfg.FrankenPHP.Worker = true
+
+	gen := NewDockerfileGenerator(cfg)
+	out, err := gen.GenerateCaddyfile()
+	if err != nil {
+		t.Fatalf("GenerateCaddyfile: %v", err)
+	}
+	for _, want := range []string{
+		"worker {",
+		"file ./public/index.php",
+		`env APP_RUNTIME Runtime\FrankenPhpSymfony\Runtime`,
+		"{$SERVER_NAME:localhost}",
+		"php_server",
+		"{$FRANKENPHP_CONFIG}",
+		"encode zstd br gzip",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("generated Caddyfile missing %q:\n%s", want, out)
+		}
+	}
+}

@@ -1,0 +1,31 @@
+# FrankenDeploy - FrankenPHP Caddyfile for {{ .Name }}
+# Worker mode: the Symfony kernel is booted once and kept in memory between
+# requests. The application MUST be stateless (no static state surviving a
+# request); memory leaks surface as automatic worker restarts.
+# https://frankenphp.dev/docs/worker/
+
+{
+	skip_install_trust
+
+	{$CADDY_GLOBAL_OPTIONS}
+
+	frankenphp {
+		worker {
+			file ./public/index.php
+			env APP_RUNTIME Runtime\FrankenPhpSymfony\Runtime
+		}
+
+		{$FRANKENPHP_CONFIG}
+	}
+}
+
+{$CADDY_EXTRA_CONFIG}
+
+{$SERVER_NAME:localhost} {
+	root {$SERVER_ROOT:public/}
+	encode zstd br gzip
+
+	{$CADDY_SERVER_EXTRA_DIRECTIVES}
+
+	php_server
+}

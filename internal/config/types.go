@@ -4,6 +4,7 @@ package config
 type ProjectConfig struct {
 	Name              string           `yaml:"name"`
 	FrankenPHPVersion string           `yaml:"frankenphp_version,omitempty"`
+	FrankenPHP        FrankenPHPConfig `yaml:"frankenphp,omitempty"`
 	PHP               PHPConfig        `yaml:"php"`
 	Database          DatabaseConfig   `yaml:"database,omitempty"`
 	Assets            AssetsConfig     `yaml:"assets,omitempty"`
@@ -12,6 +13,15 @@ type ProjectConfig struct {
 	Dockerfile        DockerfileConfig `yaml:"dockerfile,omitempty"`
 	Deploy            DeployConfig     `yaml:"deploy,omitempty"`
 	Env               EnvConfig        `yaml:"env,omitempty"`
+}
+
+// FrankenPHPConfig holds FrankenPHP runtime options.
+type FrankenPHPConfig struct {
+	// Worker enables FrankenPHP worker mode in production: the Symfony
+	// kernel is booted once and kept in memory between requests.
+	// Requires the runtime/frankenphp-symfony composer package and a
+	// stateless application (no static state shared between requests).
+	Worker bool `yaml:"worker,omitempty"`
 }
 
 // PHPConfig holds PHP-specific configuration
@@ -167,8 +177,11 @@ type ScanResult struct {
 	HasMessenger   bool
 	HasMailer      bool
 	HasAPIPlatform bool
-	Framework      string
-	Warnings       []string
+	// HasFrankenPHPRuntime is true when runtime/frankenphp-symfony is in
+	// composer.json, making the app eligible for FrankenPHP worker mode.
+	HasFrankenPHPRuntime bool
+	Framework            string
+	Warnings             []string
 }
 
 // DefaultProjectConfig returns a default project configuration

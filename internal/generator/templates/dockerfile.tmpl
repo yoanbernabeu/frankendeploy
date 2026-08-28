@@ -151,6 +151,13 @@ RUN set -eux; \
 # Copy application source (chown at copy time: a separate chown -R layer
 # would duplicate every file and double the image size)
 COPY --link --chown={{ defaultUID }}:{{ defaultGID }} . ./
+{{- if .Worker }}
+
+# FrankenPHP worker mode: replace the image default Caddyfile with the
+# generated one (worker block booting the Symfony kernel once).
+# Dev stage keeps the image default (classic mode) for easier debugging.
+COPY --link Caddyfile /etc/caddy/Caddyfile
+{{- end }}
 
 # Generate autoloader (required before running any Symfony commands)
 RUN COMPOSER_ALLOW_SUPERUSER=1 composer dump-autoload --classmap-authoritative --no-dev

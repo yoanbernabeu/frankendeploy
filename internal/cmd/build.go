@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
 	"github.com/yoanbernabeu/frankendeploy/internal/generator"
+	"github.com/yoanbernabeu/frankendeploy/internal/scanner"
 )
 
 var buildCmd = &cobra.Command{
@@ -45,6 +46,14 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("configuration validation failed: %w", errors)
 	}
 
+	// Worker mode requires the FrankenPHP Symfony runtime: without it the
+	// container would crash-loop at boot (APP_RUNTIME points to a missing class)
+	if cfg.FrankenPHP.Worker {
+		if err := checkWorkerRuntime(); err != nil {
+			return err
+		}
+	}
+
 	generateAll := buildAll || (!buildDockerfile && !buildCompose)
 
 	// Generate Dockerfile and entrypoint
@@ -65,6 +74,13 @@ func runBuild(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		PrintSuccess("Generated .dockerignore")
+
+		if cfg.FrankenPHP.Worker {
+			if err := dockerGen.WriteCaddyfile(""); err != nil {
+				return err
+			}
+			PrintSuccess("Generated Caddyfile (FrankenPHP worker mode)")
+		}
 	}
 
 	// Generate compose files
@@ -86,5 +102,20 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	fmt.Println("Next steps:")
 	fmt.Println("  Run 'frankendeploy dev up' to start the development environment")
 
+	return nil
+}
+
+// checkWorkerRuntime verifies that runtime/frankenphp-symfony is present in
+// composer.json before generating worker-mode artifacts.
+func checkWorkerRuntime() error {
+	comp, err := scanner.New(".").ParseComposer()
+	if err != nil {
+		return fmt.Errorf("frankenphp.worker is enabled but composer.json cannot be read: %w", err)
+	}
+	if !comp.HasPackage("runtime/frankenphp-symfony") {
+		return fmt.Errorf("frankenphp.worker is enabled but runtime/frankenphp-symfony is missing from composer.json.\n" +
+			"Install it with: composer require runtime/frankenphp-symfony\n" +
+			"Or disable worker mode: set frankenphp.worker: false in frankendeploy.yaml")
+	}
 	return nil
 }
