@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,7 +36,13 @@ func LoadGlobalConfig() (*GlobalConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	return LoadGlobalConfigFromPath(path)
+}
 
+// LoadGlobalConfigFromPath loads the global configuration from an explicit
+// path. Unknown fields are rejected (a typo in a server entry must fail
+// loudly, like the project config).
+func LoadGlobalConfigFromPath(path string) (*GlobalConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -45,7 +52,9 @@ func LoadGlobalConfig() (*GlobalConfig, error) {
 	}
 
 	var config GlobalConfig
-	if err := yaml.Unmarshal(data, &config); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&config); err != nil {
 		return nil, fmt.Errorf("failed to parse global config: %w", err)
 	}
 

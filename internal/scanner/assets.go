@@ -24,6 +24,11 @@ func (s *Scanner) DetectAssets() (*config.AssetsConfig, error) {
 	if s.hasAssetMapper() {
 		assetsConfig.BuildTool = "assetmapper"
 		assetsConfig.OutputDir = "public/assets"
+		// symfonycasts/tailwind-bundle: tailwind:build must run before
+		// asset-map:compile or the site deploys without CSS
+		if composer, err := s.ParseComposer(); err == nil && composer.HasPackage("symfonycasts/tailwind-bundle") {
+			assetsConfig.Tailwind = true
+		}
 		return assetsConfig, nil
 	}
 
@@ -34,16 +39,17 @@ func (s *Scanner) DetectAssets() (*config.AssetsConfig, error) {
 		return assetsConfig, nil
 	}
 
-	// Detect build tool
-	if s.hasVite(packageJSON) {
-		assetsConfig.BuildTool = "npm"
+	// Detect build tool. BuildTool must follow the lockfile (pnpm/yarn/npm):
+	// a hardcoded npm with a pnpm-lock.yaml ships the wrong lockfile to prod.
+	if s.hasVite(packageJSON) || s.hasViteBundle() {
+		assetsConfig.BuildTool = s.detectPackageManager()
 		assetsConfig.BuildCommand = s.getBuildCommand(packageJSON)
 		assetsConfig.OutputDir = "public/build"
 		return assetsConfig, nil
 	}
 
 	if s.hasWebpackEncore(packageJSON) {
-		assetsConfig.BuildTool = "npm"
+		assetsConfig.BuildTool = s.detectPackageManager()
 		assetsConfig.BuildCommand = s.getBuildCommand(packageJSON)
 		assetsConfig.OutputDir = "public/build"
 		return assetsConfig, nil
@@ -120,6 +126,17 @@ func (s *Scanner) hasVite(pkg *PackageJSON) bool {
 	}
 
 	return false
+}
+
+// hasViteBundle checks for pentatrion/vite-bundle in composer.json (Vite
+// integration driven from the Symfony side, no vite dependency in
+// package.json required)
+func (s *Scanner) hasViteBundle() bool {
+	composer, err := s.ParseComposer()
+	if err != nil {
+		return false
+	}
+	return composer.HasPackage("pentatrion/vite-bundle")
 }
 
 // hasWebpackEncore checks if Webpack Encore is used

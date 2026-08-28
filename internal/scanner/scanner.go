@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
 )
@@ -45,24 +46,48 @@ func (s *Scanner) Scan() (*config.ScanResult, error) {
 	}
 
 	// Detect database
-	dbConfig, dbWarning, err := s.DetectDatabase()
+	dbConfig, dbWarnings, err := s.DetectDatabase()
 	if err == nil && dbConfig != nil {
 		result.Database = *dbConfig
 	}
-	if dbWarning != "" {
-		result.Warnings = append(result.Warnings, dbWarning)
-	}
+	result.Warnings = append(result.Warnings, dbWarnings...)
 
 	// Detect assets
 	assetsConfig, err := s.DetectAssets()
 	if err == nil && assetsConfig != nil {
 		result.Assets = *assetsConfig
+		if assetsConfig.Tailwind {
+			result.Warnings = append(result.Warnings,
+				"symfonycasts/tailwind-bundle detected: tailwind:build will run before asset-map:compile (otherwise the site deploys without CSS)")
+		}
 	}
 
 	// Detect Symfony components
 	result.HasDoctrine = s.HasDoctrine()
 	result.HasMessenger = s.HasMessenger()
 	result.HasMailer = s.HasMailer()
+	result.HasScheduler = composer.HasPackage("symfony/scheduler")
+
+	// Resolve the real Messenger transports instead of guessing "async":
+	// a wrong transport name means a crash-looping worker in production
+	var messengerInfo messengerTransportInfo
+	if result.HasMessenger {
+		env, _ := s.GetMergedEnv()
+		messengerInfo = s.detectMessengerTransports(env)
+		result.MessengerTransports = messengerInfo.Transports
+		if len(messengerInfo.Transports) > 0 {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("Messenger: worker will consume transports [%s] (read from messenger.yaml)",
+					strings.Join(messengerInfo.Transports, ", ")))
+		} else {
+			result.Warnings = append(result.Warnings,
+				"messenger.yaml found but no async transport to consume: no worker container will run")
+		}
+	}
+	if result.HasScheduler {
+		result.Warnings = append(result.Warnings,
+			"symfony/scheduler detected: a worker will consume scheduler_default so scheduled tasks actually run in production")
+	}
 	// api-platform/core (v2/v3) or api-platform/symfony (v4 split packages)
 	result.HasAPIPlatform = composer.HasAnyPackage("api-platform/core", "api-platform/symfony")
 
@@ -76,7 +101,7 @@ func (s *Scanner) Scan() (*config.ScanResult, error) {
 	}
 
 	// Add required extensions based on detected features
-	result.PHPExtensions = s.enhanceExtensions(result.PHPExtensions, result)
+	result.PHPExtensions = s.enhanceExtensions(result.PHPExtensions, result, composer, messengerInfo)
 
 	return result, nil
 }
@@ -123,8 +148,20 @@ func (s *Scanner) HasMailer() bool {
 	return false
 }
 
+// packageExtensionHints maps composer packages (exact name or prefix ending
+// with "/") to the PHP extensions they need at runtime. Every inference is
+// announced through a scanner warning: correct or announced, never silent.
+var packageExtensionHints = []struct {
+	pkg  string // exact package name, or prefix when ending with "/"
+	exts []string
+}{
+	{"liip/imagine-bundle", []string{"gd"}},
+	{"snc/redis-bundle", []string{"redis"}},
+	{"phpoffice/", []string{"gd", "zip"}},
+}
+
 // enhanceExtensions adds required PHP extensions based on detected features
-func (s *Scanner) enhanceExtensions(extensions []string, result *config.ScanResult) []string {
+func (s *Scanner) enhanceExtensions(extensions []string, result *config.ScanResult, composer *ComposerResult, messengerInfo messengerTransportInfo) []string {
 	extMap := make(map[string]bool)
 	for _, ext := range extensions {
 		extMap[ext] = true
@@ -139,6 +176,34 @@ func (s *Scanner) enhanceExtensions(extensions []string, result *config.ScanResu
 		}
 	}
 
+	// Infer extensions from installed packages (announced)
+	if composer != nil {
+		for _, hint := range packageExtensionHints {
+			matched := ""
+			if strings.HasSuffix(hint.pkg, "/") {
+				for pkg := range composer.Packages {
+					if strings.HasPrefix(pkg, hint.pkg) {
+						matched = pkg
+						break
+					}
+				}
+			} else if composer.HasPackage(hint.pkg) {
+				matched = hint.pkg
+			}
+			if matched == "" {
+				continue
+			}
+			for _, ext := range hint.exts {
+				if !extMap[ext] {
+					extensions = append(extensions, ext)
+					extMap[ext] = true
+					result.Warnings = append(result.Warnings,
+						fmt.Sprintf("adding PHP extension %s (required by %s)", ext, matched))
+				}
+			}
+		}
+	}
+
 	// Add database-specific extension. DetectDatabase already canonicalizes
 	// the driver via config.NormalizeDBDriver, so only the canonical forms
 	// (pgsql/mysql/sqlite) need handling here.
@@ -147,7 +212,7 @@ func (s *Scanner) enhanceExtensions(extensions []string, result *config.ScanResu
 		if !extMap["pdo_pgsql"] {
 			extensions = append(extensions, "pdo_pgsql")
 		}
-	case "mysql":
+	case "mysql", "mariadb":
 		if !extMap["pdo_mysql"] {
 			extensions = append(extensions, "pdo_mysql")
 		}
@@ -157,9 +222,26 @@ func (s *Scanner) enhanceExtensions(extensions []string, result *config.ScanResu
 		}
 	}
 
-	// Add AMQP if Messenger is detected
-	if result.HasMessenger && !extMap["amqp"] {
+	// AMQP only when an amqp transport is actually configured — installing
+	// the extension for every messenger.yaml (present in each webapp
+	// skeleton) bloated images for nothing
+	if messengerInfo.UsesAMQP && !extMap["amqp"] {
 		extensions = append(extensions, "amqp")
+		extMap["amqp"] = true
+		result.Warnings = append(result.Warnings, "adding PHP extension amqp (amqp:// Messenger transport detected)")
+	}
+	if messengerInfo.UsesRedis && !extMap["redis"] {
+		extensions = append(extensions, "redis")
+		extMap["redis"] = true
+		result.Warnings = append(result.Warnings, "adding PHP extension redis (redis:// Messenger transport detected)")
+	}
+
+	// pcntl lets messenger:consume shut down gracefully on SIGTERM during
+	// deployments instead of dying mid-message
+	if result.HasMessenger && !extMap["pcntl"] {
+		extensions = append(extensions, "pcntl")
+		extMap["pcntl"] = true
+		result.Warnings = append(result.Warnings, "adding PHP extension pcntl (graceful Messenger worker shutdown)")
 	}
 
 	// Deduplicate while preserving order
@@ -204,11 +286,22 @@ func (s *Scanner) ToProjectConfig(result *config.ScanResult, name string) *confi
 		}
 	}
 
-	// Auto-fill Messenger config if detected
-	if result.HasMessenger {
+	// Auto-fill Messenger config from the transports actually configured
+	// in messenger.yaml (never guess "async": a wrong transport name is a
+	// crash-looping worker)
+	if result.HasMessenger && len(result.MessengerTransports) > 0 {
 		cfg.Messenger = config.MessengerConfig{
 			Enabled:    true,
-			Transports: []string{"async"},
+			Transports: result.MessengerTransports,
+		}
+	}
+
+	// symfony/scheduler: its scheduler_default transport must be consumed
+	// or scheduled tasks silently never run
+	if result.HasScheduler {
+		cfg.Messenger.Enabled = true
+		if !contains(cfg.Messenger.Transports, "scheduler_default") {
+			cfg.Messenger.Transports = append(cfg.Messenger.Transports, "scheduler_default")
 		}
 	}
 

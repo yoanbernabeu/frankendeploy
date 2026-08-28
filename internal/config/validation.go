@@ -233,7 +233,7 @@ func isValidPHPVersion(version string) bool {
 }
 
 func isValidDatabaseDriver(driver string) bool {
-	validDrivers := []string{"pgsql", "mysql", "sqlite", "pdo_pgsql", "pdo_mysql", "pdo_sqlite"}
+	validDrivers := []string{"pgsql", "mysql", "mariadb", "sqlite", "pdo_pgsql", "pdo_mysql", "pdo_sqlite"}
 	for _, d := range validDrivers {
 		if driver == d {
 			return true

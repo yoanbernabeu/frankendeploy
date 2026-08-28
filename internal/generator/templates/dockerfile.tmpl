@@ -168,6 +168,11 @@ RUN COMPOSER_ALLOW_SUPERUSER=1 composer dump-autoload --classmap-authoritative -
 # AssetMapper: install importmap dependencies and compile assets
 RUN set -eux; \
     php bin/console importmap:install --no-interaction; \
+{{- if .Assets.Tailwind }}
+    # Tailwind CSS must be built BEFORE asset-map:compile or the site
+    # deploys without any CSS
+    php bin/console tailwind:build --minify; \
+{{- end }}
     php bin/console asset-map:compile --no-interaction
 {{- else }}
 # Webpack/Vite: copy pre-built assets from node_build stage

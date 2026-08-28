@@ -200,7 +200,12 @@ When enabled, `frankendeploy build` generates a `Caddyfile` at the project root 
 |--------|-------------|
 | `pgsql` | postgres:VERSION-alpine |
 | `mysql` | mysql:VERSION |
+| `mariadb` | mariadb:VERSION |
 | `sqlite` | No container needed |
+
+MariaDB is auto-detected from `DATABASE_URL` (a `mariadb://` scheme or a `serverVersion` ending in `-MariaDB`). The generated `DATABASE_URL` uses the `mysql://` scheme with the `-MariaDB` serverVersion suffix, as Doctrine expects.
+
+The scanner reads `DATABASE_URL` from `.env` **and** `.env.local` (the latter wins, matching Symfony's runtime behavior), and warns when the two files disagree on the driver.
 
 ### `database.path`
 
@@ -244,6 +249,8 @@ messenger:
 
 When enabled, FrankenDeploy deploys a separate container (`<app>-worker`) running `messenger:consume`.
 
+`frankendeploy init` fills `transports` from the transports actually configured in `config/packages/messenger.yaml` (resolving `%env()%` DSNs through `.env`/`.env.local`). The failure transport and `sync://` transports are excluded. With `symfony/scheduler` installed, `scheduler_default` is added so scheduled tasks actually run in production. An `amqp://` or `redis://` transport DSN also adds the matching PHP extension, and `pcntl` is always added with Messenger for graceful worker shutdown — every inference is announced at `init`.
+
 ### `dockerfile`
 
 Customize the generated Dockerfile:
@@ -255,6 +262,16 @@ dockerfile:
     - ffmpeg
   extra_commands:     # Raw Dockerfile instructions
     - "RUN pecl install redis && docker-php-ext-enable redis"
+```
+
+### `assets.tailwind`
+
+With `symfonycasts/tailwind-bundle` (AssetMapper), `tailwind:build --minify` must run **before** `asset-map:compile` — otherwise the site deploys without CSS. The scanner detects the bundle and sets `tailwind: true` automatically (announced at `init`).
+
+```yaml
+assets:
+  build_tool: assetmapper
+  tailwind: true
 ```
 
 ### `assets.build_tool`

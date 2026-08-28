@@ -44,7 +44,7 @@ services:
       options:
         max-size: "{{ logMaxSize }}"
         max-file: "{{ logMaxFile }}"
-{{- if or (eq .Database.Driver "pgsql") (eq .Database.Driver "mysql") }}
+{{- if or (eq .Database.Driver "pgsql") (eq .Database.Driver "mysql") (eq .Database.Driver "mariadb") }}
     depends_on:
       database:
         condition: service_healthy
@@ -86,6 +86,28 @@ services:
       - db_data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+{{- end }}
+
+{{- if eq .Database.Driver "mariadb" }}
+
+  database:
+    image: mariadb:{{ .Database.Version }}
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_USER: {{ .DevDBUser }}
+      MARIADB_PASSWORD: {{ .DevDBPassword }}
+      MARIADB_DATABASE: {{ .DevDBName }}
+    ports:
+      # Bind to localhost only: no reason to expose the dev DB on the LAN
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      # healthcheck.sh ships with the official mariadb image
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 5s
       timeout: 5s
       retries: 5

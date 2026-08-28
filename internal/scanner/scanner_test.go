@@ -76,7 +76,7 @@ func TestEnhanceExtensions_Dedup(t *testing.T) {
 
 	// Input with duplicates: pdo_pgsql appears in composer AND would be added by enhanceExtensions
 	input := []string{"intl", "opcache", "zip", "pdo_pgsql", "intl", "zip"}
-	got := s.enhanceExtensions(input, result)
+	got := s.enhanceExtensions(input, result, nil, messengerTransportInfo{})
 
 	// Check no duplicates
 	seen := make(map[string]bool)
@@ -274,5 +274,298 @@ func TestScan_NoFrankenPHPRuntime_WorkerDisabled(t *testing.T) {
 	cfg := s.ToProjectConfig(result, "myapp")
 	if cfg.FrankenPHP.Worker {
 		t.Error("worker mode must stay opt-in without the runtime package")
+	}
+}
+
+// --- Issue #59: smarter detection ---
+
+func writeFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+const minimalSymfonyComposer = `{"require": {"php": ">=8.3", "symfony/framework-bundle": "^7.1"}}`
+
+func TestGetMergedEnv_EnvLocalOverrides(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".env", "DATABASE_URL=postgresql://app:x@127.0.0.1:5432/app?serverVersion=16\nAPP_ENV=dev\n")
+	writeFile(t, dir, ".env.local", "DATABASE_URL=mysql://app:x@127.0.0.1:3306/app?serverVersion=8.0\n")
+
+	env, err := New(dir).GetMergedEnv()
+	if err != nil {
+		t.Fatalf("GetMergedEnv: %v", err)
+	}
+	if !strings.HasPrefix(env["DATABASE_URL"], "mysql://") {
+		t.Errorf(".env.local must override .env, got %q", env["DATABASE_URL"])
+	}
+	if env["APP_ENV"] != "dev" {
+		t.Errorf(".env values not overridden must survive, got %q", env["APP_ENV"])
+	}
+}
+
+func TestDetectDatabase_EnvLocalOverridesEnv_WithWarning(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "composer.json", minimalSymfonyComposer)
+	writeFile(t, dir, ".env", "DATABASE_URL=postgresql://app:x@127.0.0.1:5432/app?serverVersion=16\n")
+	writeFile(t, dir, ".env.local", "DATABASE_URL=mysql://app:x@127.0.0.1:3306/app?serverVersion=8.0\n")
+
+	db, warnings, err := New(dir).DetectDatabase()
+	if err != nil {
+		t.Fatalf("DetectDatabase: %v", err)
+	}
+	if db == nil || db.Driver != "mysql" {
+		t.Fatalf("expected mysql from .env.local, got %+v", db)
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, ".env.local") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a divergence warning mentioning .env.local, got %v", warnings)
+	}
+}
+
+func TestParseDBURL_MariaDBAndAltSchemes(t *testing.T) {
+	tests := []struct {
+		url         string
+		wantDriver  string
+		wantVersion string
+	}{
+		{"mysql://app:x@db:3306/app?serverVersion=10.11.2-MariaDB", "mariadb", "10.11.2"},
+		{"mysql://app:x@db:3306/app?serverVersion=mariadb-10.6", "mariadb", "10.6"},
+		{"mariadb://app:x@db:3306/app", "mariadb", "11"},
+		{"mysql2://app:x@db:3306/app?serverVersion=8.0", "mysql", "8.0"},
+		{"pgsql://app:x@db:5432/app", "pgsql", "16"},
+		{"postgresql://app:x@db:5432/app?serverVersion=16", "pgsql", "16"},
+	}
+	for _, tt := range tests {
+		driver, version := parseDBURL(tt.url)
+		if driver != tt.wantDriver || version != tt.wantVersion {
+			t.Errorf("parseDBURL(%q) = (%q, %q), want (%q, %q)", tt.url, driver, version, tt.wantDriver, tt.wantVersion)
+		}
+	}
+}
+
+func TestScan_InferredExtensionsAnnounced(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "composer.json", `{
+		"require": {
+			"php": ">=8.3",
+			"symfony/framework-bundle": "^7.1",
+			"liip/imagine-bundle": "^2.12",
+			"phpoffice/phpspreadsheet": "^2.0"
+		}
+	}`)
+
+	result, err := New(dir).Scan()
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	for _, want := range []string{"gd", "zip"} {
+		found := false
+		for _, ext := range result.PHPExtensions {
+			if ext == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected inferred extension %q, got %v", want, result.PHPExtensions)
+		}
+	}
+	warned := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "gd") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Errorf("inferred extensions must be announced, warnings: %v", result.Warnings)
+	}
+}
+
+func TestScan_MessengerTransportsFromYaml(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "composer.json", minimalSymfonyComposer)
+	writeFile(t, dir, ".env", "MESSENGER_TRANSPORT_DSN=doctrine://default\n")
+	writeFile(t, dir, "config/packages/messenger.yaml", `
+framework:
+    messenger:
+        failure_transport: failed
+        transports:
+            async: '%env(MESSENGER_TRANSPORT_DSN)%'
+            failed: 'doctrine://default?queue_name=failed'
+            sync_bus: 'sync://'
+        routing:
+            App\Message\Foo: async
+`)
+
+	s := New(dir)
+	result, err := s.Scan()
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	cfg := s.ToProjectConfig(result, "myapp")
+	if len(cfg.Messenger.Transports) != 1 || cfg.Messenger.Transports[0] != "async" {
+		t.Errorf("expected only [async] (no failed, no sync), got %v", cfg.Messenger.Transports)
+	}
+	// doctrine transport: no amqp extension
+	for _, ext := range result.PHPExtensions {
+		if ext == "amqp" {
+			t.Errorf("amqp extension must not be added for a doctrine transport, got %v", result.PHPExtensions)
+		}
+	}
+	// pcntl for graceful worker shutdown
+	foundPcntl := false
+	for _, ext := range result.PHPExtensions {
+		if ext == "pcntl" {
+			foundPcntl = true
+		}
+	}
+	if !foundPcntl {
+		t.Errorf("expected pcntl for messenger graceful shutdown, got %v", result.PHPExtensions)
+	}
+}
+
+func TestScan_MessengerAMQPTransport(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "composer.json", minimalSymfonyComposer)
+	writeFile(t, dir, ".env", "MESSENGER_TRANSPORT_DSN=amqp://guest:guest@rabbitmq:5672/%2f/messages\n")
+	writeFile(t, dir, "config/packages/messenger.yaml", `
+framework:
+    messenger:
+        transports:
+            async: '%env(MESSENGER_TRANSPORT_DSN)%'
+`)
+
+	result, err := New(dir).Scan()
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	found := false
+	for _, ext := range result.PHPExtensions {
+		if ext == "amqp" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected amqp extension for amqp transport, got %v", result.PHPExtensions)
+	}
+}
+
+func TestScan_SchedulerAddsTransport(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "composer.json", `{
+		"require": {
+			"php": ">=8.3",
+			"symfony/framework-bundle": "^7.1",
+			"symfony/scheduler": "^7.1"
+		}
+	}`)
+
+	s := New(dir)
+	result, err := s.Scan()
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if !result.HasScheduler {
+		t.Error("expected HasScheduler")
+	}
+	cfg := s.ToProjectConfig(result, "myapp")
+	if !cfg.Messenger.Enabled {
+		t.Error("scheduler requires a running messenger worker")
+	}
+	found := false
+	for _, tr := range cfg.Messenger.Transports {
+		if tr == "scheduler_default" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected scheduler_default transport, got %v", cfg.Messenger.Transports)
+	}
+}
+
+func TestDetectAssets_ViteWithPnpm(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "composer.json", minimalSymfonyComposer)
+	writeFile(t, dir, "package.json", `{"scripts": {"build": "vite build"}, "devDependencies": {"vite": "^5.0"}}`)
+	writeFile(t, dir, "pnpm-lock.yaml", "lockfileVersion: 9\n")
+
+	assets, err := New(dir).DetectAssets()
+	if err != nil {
+		t.Fatalf("DetectAssets: %v", err)
+	}
+	if assets.BuildTool != "pnpm" {
+		t.Errorf("BuildTool must follow the lockfile (pnpm), got %q", assets.BuildTool)
+	}
+	if !strings.HasPrefix(assets.BuildCommand, "pnpm ") {
+		t.Errorf("BuildCommand must use pnpm, got %q", assets.BuildCommand)
+	}
+}
+
+func TestDetectAssets_PentatrionViteBundle(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "composer.json", `{
+		"require": {
+			"php": ">=8.3",
+			"symfony/framework-bundle": "^7.1",
+			"pentatrion/vite-bundle": "^8.0"
+		}
+	}`)
+	writeFile(t, dir, "package.json", `{"scripts": {"build": "vite build"}}`)
+
+	assets, err := New(dir).DetectAssets()
+	if err != nil {
+		t.Fatalf("DetectAssets: %v", err)
+	}
+	if assets.BuildTool == "" || assets.BuildTool == "assetmapper" {
+		t.Errorf("pentatrion/vite-bundle must trigger a JS build, got %q", assets.BuildTool)
+	}
+}
+
+func TestDetectAssets_TailwindBundle(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "composer.json", `{
+		"require": {
+			"php": ">=8.3",
+			"symfony/framework-bundle": "^7.1",
+			"symfonycasts/tailwind-bundle": "^0.6"
+		}
+	}`)
+	writeFile(t, dir, "importmap.php", "<?php return [];\n")
+
+	assets, err := New(dir).DetectAssets()
+	if err != nil {
+		t.Fatalf("DetectAssets: %v", err)
+	}
+	if assets.BuildTool != "assetmapper" {
+		t.Fatalf("expected assetmapper, got %q", assets.BuildTool)
+	}
+	if !assets.Tailwind {
+		t.Error("expected Tailwind to be detected (site would deploy without CSS)")
+	}
+}
+
+func TestIsSymfonyProject_RequiresFrameworkBundle(t *testing.T) {
+	dir := t.TempDir()
+	// A Laravel project pulls symfony/console transitively
+	writeFile(t, dir, "composer.json", `{
+		"require": {
+			"php": ">=8.3",
+			"laravel/framework": "^11.0",
+			"symfony/console": "^7.0"
+		}
+	}`)
+
+	if New(dir).IsSymfonyProject() {
+		t.Error("a project without symfony/framework-bundle must not be detected as Symfony")
 	}
 }

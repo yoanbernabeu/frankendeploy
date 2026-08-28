@@ -134,8 +134,10 @@ func NormalizeDBDriver(driver string) string {
 	switch strings.ToLower(driver) {
 	case "pdo_pgsql", "postgresql", "postgres", "pgsql":
 		return "pgsql"
-	case "pdo_mysql", "mysqli", "mysql":
+	case "pdo_mysql", "mysqli", "mysql", "mysql2":
 		return "mysql"
+	case "mariadb":
+		return "mariadb"
 	case "pdo_sqlite", "sqlite3", "sqlite":
 		return "sqlite"
 	default:

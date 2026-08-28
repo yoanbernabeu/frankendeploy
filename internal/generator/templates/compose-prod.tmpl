@@ -88,6 +88,23 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+{{- else if eq .Database.Driver "mariadb" }}
+    image: mariadb:{{ .Database.Version }}
+    environment:
+      # Root gets a random one-time password: the app password must not
+      # double as the root password
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+      MARIADB_USER: ${DATABASE_USER:-{{ .Name }}}
+      MARIADB_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD is required}
+      MARIADB_DATABASE: ${DATABASE_NAME:-{{ .Name }}}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      # healthcheck.sh ships with the official mariadb image
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 {{- end }}
     restart: unless-stopped
     logging:

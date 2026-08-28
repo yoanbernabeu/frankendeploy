@@ -43,6 +43,11 @@ func connectToServerInternal(serverName string, loadProject bool, opts ...ssh.Cl
 		if err != nil {
 			return nil, fmt.Errorf("failed to load project config: %w", err)
 		}
+		// A hand-edited invalid frankendeploy.yaml must fail here, not
+		// flow into the generator or the deployment
+		if errs := config.ValidateProjectConfig(projectCfg); errs.HasErrors() {
+			return nil, fmt.Errorf("invalid frankendeploy.yaml: %w", errs)
+		}
 	}
 
 	globalCfg, err := config.LoadGlobalConfig()
