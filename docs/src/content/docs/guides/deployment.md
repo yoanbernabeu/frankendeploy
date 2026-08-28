@@ -66,7 +66,7 @@ This is **recommended** when:
 - You want faster transfers (source code vs Docker image)
 
 How it works:
-1. Transfers source code via `rsync` (fast, excludes node_modules/vendor)
+1. Transfers source code over the existing SSH connection (pure-Go SFTP — no rsync/scp required, works on Windows; excludes node_modules/vendor)
 2. Builds Docker image on the VPS
 3. Deploys normally
 

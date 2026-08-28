@@ -56,7 +56,7 @@ func (c *Client) Exec(ctx context.Context, command string) (*ExecResult, error) 
 	session.Stdout = &stdout
 	session.Stderr = &stderr
 
-	err = session.Run(command)
+	err = runSessionWithContext(ctx, session, command)
 
 	result := &ExecResult{
 		Stdout:   stdout.String(),
@@ -76,6 +76,27 @@ func (c *Client) Exec(ctx context.Context, command string) (*ExecResult, error) 
 	return result, nil
 }
 
+// runSessionWithContext runs a session command while honoring context
+// cancellation: a remote command that hangs (interactive apt prompt, stuck
+// docker build) no longer blocks the CLI past Ctrl+C or a timeout — the
+// session is closed and the context error returned.
+func runSessionWithContext(ctx context.Context, session *ssh.Session, command string) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- session.Run(command)
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		// Closing the session tears down the remote command's channel;
+		// the goroutine then finishes on its own.
+		_ = session.Close()
+		return ctx.Err()
+	}
+}
+
 // ExecStream executes a command and streams output to stdout/stderr
 func (c *Client) ExecStream(ctx context.Context, command string) error {
 	if err := ctx.Err(); err != nil {
@@ -91,7 +112,7 @@ func (c *Client) ExecStream(ctx context.Context, command string) error {
 	session.Stdout = os.Stdout
 	session.Stderr = os.Stderr
 
-	return session.Run(command)
+	return runSessionWithContext(ctx, session, command)
 }
 
 // GetServerArchitecture returns the server's CPU architecture (e.g., "x86_64", "aarch64")

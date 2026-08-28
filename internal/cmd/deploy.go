@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"os"
@@ -84,6 +86,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	serverCfg := conn.Server
 	globalCfg := conn.Global
 
+	deployStart := time.Now()
 	PrintInfo("Deploying %s to %s...", projectCfg.Name, serverName)
 	PrintSuccess("Connected to %s", serverCfg.Host)
 
@@ -130,7 +133,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	if deployRemoteBuild {
 		// Remote build: transfer source code and build on server
 		PrintInfo("Transferring source code to server...")
-		if err := transferSourceCode(ctx, client, serverCfg, projectCfg.Name, remoteAppPath); err != nil {
+		if err := transferSourceCode(ctx, client, projectCfg.Name, remoteAppPath); err != nil {
 			return fmt.Errorf("transfer failed: %w", err)
 		}
 		PrintSuccess("Source code transferred")
@@ -152,7 +155,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		}
 
 		PrintInfo("Transferring image to server...")
-		if err := transferImage(ctx, client, serverCfg, imageName); err != nil {
+		if err := transferImage(ctx, client, imageName); err != nil {
 			return fmt.Errorf("transfer failed: %w", err)
 		}
 		PrintSuccess("Image transferred")
@@ -251,7 +254,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	PrintSuccess("Deployment complete!")
+	PrintSuccess("Deployment complete in %s!", time.Since(deployStart).Round(time.Second))
 	fmt.Println()
 	fmt.Printf("Application deployed: %s\n", projectCfg.Name)
 	fmt.Printf("  Tag: %s\n", deployTag)
@@ -298,33 +301,43 @@ func buildDockerImage(imageName, platform string) error {
 	return dockerCmd.Run()
 }
 
-func transferImage(ctx context.Context, client ssh.Executor, serverCfg *config.ServerConfig, imageName string) error {
-	// Save image to tar
-	tarPath := fmt.Sprintf("/tmp/%s.tar", strings.ReplaceAll(imageName, ":", "-"))
+// sourceCodeExcludes lists what never belongs in the remote build context.
+var sourceCodeExcludes = []string{".git", "node_modules", "vendor", "var", ".env.local"}
 
-	saveCmd := exec.Command("docker", "save", "-o", tarPath, imageName)
-	if err := saveCmd.Run(); err != nil {
-		return fmt.Errorf("failed to save image: %w", err)
+// transferImage uploads the locally built image over the existing SSH
+// connection (pure-Go SFTP: no scp binary, no second SSH handshake, works on
+// Windows, honors the configured key/known-hosts by construction).
+func transferImage(ctx context.Context, client *ssh.Client, imageName string) error {
+	// Save the image gzip-compressed: docker load reads .tar.gz natively and
+	// PHP image layers compress ~3x — that is minutes saved on an average
+	// uplink for a 700MB image
+	base := strings.ReplaceAll(imageName, ":", "-")
+	tarPath := filepath.Join(os.TempDir(), base+".tar.gz")
+
+	if err := saveImageCompressed(imageName, tarPath); err != nil {
+		return err
 	}
 	defer os.Remove(tarPath)
 
-	// Get image size for progress
-	info, _ := os.Stat(tarPath)
-	PrintVerbose("Image size: %.2f MB", float64(info.Size())/1024/1024)
-
-	// Upload using scp
-	remoteTarPath := fmt.Sprintf("/tmp/%s.tar", strings.ReplaceAll(imageName, ":", "-"))
-
-	scpArgs := []string{
-		"-P", fmt.Sprintf("%d", serverCfg.Port),
+	info, err := os.Stat(tarPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat image archive: %w", err)
 	}
-	if serverCfg.KeyPath != "" {
-		scpArgs = append(scpArgs, "-i", serverCfg.KeyPath)
-	}
-	scpArgs = append(scpArgs, tarPath, fmt.Sprintf("%s@%s:%s", serverCfg.User, serverCfg.Host, remoteTarPath))
+	totalMB := float64(info.Size()) / 1024 / 1024
+	PrintInfo("Uploading image (%.1f MB compressed)...", totalMB)
 
-	scpCmd := exec.Command("scp", scpArgs...)
-	if err := scpCmd.Run(); err != nil {
+	remoteTarPath := fmt.Sprintf("/tmp/%s.tar.gz", base)
+
+	lastPercent := -10
+	err = client.UploadFile(ctx, tarPath, remoteTarPath, func(written, total int64) {
+		percent := int(written * 100 / total)
+		// One line every 10%: informative without flooding CI logs
+		if percent >= lastPercent+10 {
+			lastPercent = percent - percent%10
+			PrintInfo("  %d%% (%.1f/%.1f MB)", percent, float64(written)/1024/1024, totalMB)
+		}
+	})
+	if err != nil {
 		return fmt.Errorf("failed to upload image: %w", err)
 	}
 
@@ -341,36 +354,49 @@ func transferImage(ctx context.Context, client ssh.Executor, serverCfg *config.S
 	return nil
 }
 
-func transferSourceCode(ctx context.Context, client ssh.Executor, serverCfg *config.ServerConfig, appName, appPath string) error {
-	// Create build directory on server
+// saveImageCompressed streams `docker save` through gzip into destPath.
+func saveImageCompressed(imageName, destPath string) error {
+	out, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("failed to create image archive: %w", err)
+	}
+	defer out.Close()
+
+	gz := gzip.NewWriter(out)
+	saveCmd := exec.Command("docker", "save", imageName)
+	saveCmd.Stdout = gz
+	var stderr bytes.Buffer
+	saveCmd.Stderr = &stderr
+	if err := saveCmd.Run(); err != nil {
+		return fmt.Errorf("failed to save image: %w (%s)", err, strings.TrimSpace(stderr.String()))
+	}
+	if err := gz.Close(); err != nil {
+		return fmt.Errorf("failed to compress image: %w", err)
+	}
+	return nil
+}
+
+// transferSourceCode uploads the project source into the remote build
+// directory over the existing SSH connection (pure-Go SFTP, no rsync
+// dependency — rsync does not exist on Windows).
+func transferSourceCode(ctx context.Context, client *ssh.Client, appName, appPath string) error {
+	// Create a fresh build directory on the server (equivalent to the old
+	// rsync --delete into an empty target)
 	buildPath := fmt.Sprintf("%s/build", appPath)
 	if _, err := client.Exec(ctx, fmt.Sprintf("rm -rf %s && mkdir -p %s", buildPath, buildPath)); err != nil {
 		return fmt.Errorf("failed to create build directory: %w", err)
 	}
 
-	// Use rsync to transfer source code (respects .dockerignore patterns)
-	sshArgs := fmt.Sprintf("ssh -p %d", serverCfg.Port)
-	if serverCfg.KeyPath != "" {
-		sshArgs += fmt.Sprintf(" -i %s", serverCfg.KeyPath)
+	count, err := client.UploadDir(ctx, ".", buildPath, ssh.UploadDirOptions{
+		Exclude: sourceCodeExcludes,
+		Progress: func(uploaded int, currentFile string) {
+			PrintVerbose("  %s", currentFile)
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("source transfer failed: %w", err)
 	}
-	rsyncArgs := []string{
-		"-avz", "--delete",
-		"--exclude", ".git",
-		"--exclude", "node_modules",
-		"--exclude", "vendor",
-		"--exclude", "var",
-		"--exclude", ".env.local",
-		"-e", sshArgs,
-		"./",
-		fmt.Sprintf("%s@%s:%s/", serverCfg.User, serverCfg.Host, buildPath),
-	}
-
-	rsyncCmd := exec.Command("rsync", rsyncArgs...)
-	rsyncCmd.Stdout = os.Stdout
-	rsyncCmd.Stderr = os.Stderr
-	if err := rsyncCmd.Run(); err != nil {
-		return fmt.Errorf("rsync failed: %w", err)
-	}
+	PrintInfo("  %d files transferred", count)
 
 	return nil
 }
