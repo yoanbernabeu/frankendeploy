@@ -70,7 +70,8 @@ func (s *Scanner) GetDoctrineConfig() (*DoctrineConfig, error) {
 type MessengerConfig struct {
 	Framework struct {
 		Messenger struct {
-			Transports map[string]interface{} `yaml:"transports"`
+			FailureTransport string                 `yaml:"failure_transport"`
+			Transports       map[string]interface{} `yaml:"transports"`
 		} `yaml:"messenger"`
 	} `yaml:"framework"`
 }
@@ -89,6 +90,29 @@ func (s *Scanner) GetMessengerConfig() (*MessengerConfig, error) {
 	}
 
 	return &config, nil
+}
+
+// GetMergedEnv reads .env then overlays .env.local, following the Symfony
+// convention: .env.local holds the machine-specific values and overrides
+// .env. Missing files are tolerated; an error is returned only when neither
+// file exists.
+func (s *Scanner) GetMergedEnv() (map[string]string, error) {
+	merged := make(map[string]string)
+
+	base, baseErr := s.GetEnvFile(".env")
+	for k, v := range base {
+		merged[k] = v
+	}
+
+	local, localErr := s.GetEnvFile(".env.local")
+	for k, v := range local {
+		merged[k] = v
+	}
+
+	if baseErr != nil && localErr != nil {
+		return merged, baseErr
+	}
+	return merged, nil
 }
 
 // GetEnvFile reads and parses a .env file

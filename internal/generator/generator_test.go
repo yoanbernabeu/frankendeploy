@@ -1545,3 +1545,92 @@ func TestGenerateCaddyfile_WorkerBlock(t *testing.T) {
 		}
 	}
 }
+
+// --- Issue #59: MariaDB + Tailwind support ---
+
+func TestGetDBDriverInfo_MariaDB(t *testing.T) {
+	info, err := GetDBDriverInfo("mariadb")
+	if err != nil {
+		t.Fatalf("GetDBDriverInfo: %v", err)
+	}
+	if info.DockerImage != "mariadb" {
+		t.Errorf("expected mariadb image, got %q", info.DockerImage)
+	}
+	if img := info.FullImage("10.11"); img != "mariadb:10.11" {
+		t.Errorf("expected mariadb:10.11, got %q", img)
+	}
+	url := info.BuildDatabaseURL("u", "p", "h", "db", "10.11")
+	if !strings.Contains(url, "serverVersion=10.11-MariaDB") {
+		t.Errorf("Doctrine needs the -MariaDB serverVersion suffix, got %q", url)
+	}
+	if !strings.HasPrefix(url, "mysql://") {
+		t.Errorf("MariaDB uses the mysql:// scheme, got %q", url)
+	}
+	dump := info.BuildDumpCmd("c", "u", "p", "db")
+	if !strings.Contains(dump, "mariadb-dump") {
+		t.Errorf("expected mariadb-dump, got %q", dump)
+	}
+}
+
+func TestComposeProd_MariaDB(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Name: "myapp",
+		PHP:  config.PHPConfig{Version: "8.3"},
+	}
+	managed := true
+	cfg.Database = config.DatabaseConfig{Driver: "mariadb", Version: "10.11", Managed: &managed}
+
+	gen := NewComposeGenerator(cfg)
+	out, err := gen.GenerateProd()
+	if err != nil {
+		t.Fatalf("GenerateProd: %v", err)
+	}
+	if !strings.Contains(out, "image: mariadb:10.11") {
+		t.Errorf("expected mariadb image (mysql:10.11.2 does not exist), got:\n%s", out)
+	}
+	if !strings.Contains(out, "MARIADB_RANDOM_ROOT_PASSWORD") {
+		t.Errorf("root password must be randomized like mysql, got:\n%s", out)
+	}
+	if !strings.Contains(out, "healthcheck.sh") {
+		t.Errorf("expected official mariadb healthcheck script, got:\n%s", out)
+	}
+}
+
+func TestDockerfile_TailwindBuildBeforeAssetMapCompile(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Name:   "myapp",
+		PHP:    config.PHPConfig{Version: "8.3"},
+		Assets: config.AssetsConfig{BuildTool: "assetmapper", OutputDir: "public/assets", Tailwind: true},
+	}
+
+	gen := NewDockerfileGenerator(cfg)
+	out, err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	twIdx := strings.Index(out, "php bin/console tailwind:build")
+	compileIdx := strings.Index(out, "php bin/console asset-map:compile")
+	if twIdx == -1 {
+		t.Fatalf("expected tailwind:build in Dockerfile (site deploys without CSS otherwise):\n%s", out)
+	}
+	if compileIdx == -1 || twIdx > compileIdx {
+		t.Error("tailwind:build must run before asset-map:compile")
+	}
+}
+
+func TestDockerfile_NoTailwindWithoutBundle(t *testing.T) {
+	cfg := &config.ProjectConfig{
+		Name:   "myapp",
+		PHP:    config.PHPConfig{Version: "8.3"},
+		Assets: config.AssetsConfig{BuildTool: "assetmapper", OutputDir: "public/assets"},
+	}
+
+	gen := NewDockerfileGenerator(cfg)
+	out, err := gen.Generate()
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if strings.Contains(out, "tailwind:build") {
+		t.Errorf("tailwind:build must not appear without the bundle:\n%s", out)
+	}
+}

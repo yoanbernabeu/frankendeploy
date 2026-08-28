@@ -13,6 +13,9 @@ type DBDriverInfo struct {
 	HealthcheckCmd []string
 	DataVolumePath string
 	PHPExtension   string
+	// ServerVersionSuffix is appended to the version in the Doctrine
+	// DATABASE_URL serverVersion parameter (e.g. "-MariaDB").
+	ServerVersionSuffix string
 
 	// BuildEnvArgs returns Docker env flags (-e ...) for the database container.
 	// Arguments (user, password, dbName) should be pre-escaped for shell safety.
@@ -41,8 +44,8 @@ func (d DBDriverInfo) BuildDatabaseURL(user, password, host, dbName, version str
 	if version == "" {
 		version = d.DefaultVersion
 	}
-	return fmt.Sprintf("%s://%s:%s@%s:%s/%s?serverVersion=%s&charset=%s",
-		d.URLScheme, user, password, host, d.Port, dbName, version, d.URLCharset)
+	return fmt.Sprintf("%s://%s:%s@%s:%s/%s?serverVersion=%s%s&charset=%s",
+		d.URLScheme, user, password, host, d.Port, dbName, version, d.ServerVersionSuffix, d.URLCharset)
 }
 
 var dbDriverRegistry = map[string]DBDriverInfo{
@@ -92,6 +95,32 @@ var dbDriverRegistry = map[string]DBDriverInfo{
 		// without locking the database while the old code still serves traffic.
 		BuildDumpCmd: func(containerName, user, password, dbName string) string {
 			return fmt.Sprintf("docker exec %s mysqldump -u%s -p%s --single-transaction --routines --triggers %s",
+				containerName, user, password, dbName)
+		},
+	},
+	"mariadb": {
+		DockerImage:    "mariadb",
+		DefaultVersion: "11",
+		ImageSuffix:    "",
+		Port:           MySQLPort,
+		// Doctrine reaches MariaDB through the mysql driver; the
+		// -MariaDB serverVersion suffix tells it which SQL dialect to use
+		URLScheme:           "mysql",
+		URLCharset:          "utf8mb4",
+		ServerVersionSuffix: "-MariaDB",
+		// healthcheck.sh ships with the official mariadb image
+		HealthcheckCmd: []string{"CMD", "healthcheck.sh", "--connect", "--innodb_initialized"},
+		DataVolumePath: "/var/lib/mysql",
+		PHPExtension:   "pdo_mysql",
+		BuildEnvArgs: func(user, password, dbName string) string {
+			return fmt.Sprintf("-e MARIADB_ROOT_PASSWORD=%s -e MARIADB_USER=%s -e MARIADB_PASSWORD=%s -e MARIADB_DATABASE=%s",
+				password, user, password, dbName)
+		},
+		BuildHealthCmd: func(containerName, _, _ string) string {
+			return fmt.Sprintf("docker exec %s healthcheck.sh --connect --innodb_initialized", containerName)
+		},
+		BuildDumpCmd: func(containerName, user, password, dbName string) string {
+			return fmt.Sprintf("docker exec %s mariadb-dump -u%s -p%s --single-transaction --routines --triggers %s",
 				containerName, user, password, dbName)
 		},
 	},

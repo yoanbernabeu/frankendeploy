@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -44,8 +45,8 @@ func getSQLiteDirectory(path string) string {
 }
 
 // DetectDatabase detects the database configuration from the project.
-// Returns the config, an optional warning message, and an error.
-func (s *Scanner) DetectDatabase() (*config.DatabaseConfig, string, error) {
+// Returns the config, optional warning messages, and an error.
+func (s *Scanner) DetectDatabase() (*config.DatabaseConfig, []string, error) {
 	dbConfig := &config.DatabaseConfig{}
 
 	// First, check doctrine.yaml for explicit driver
@@ -58,15 +59,21 @@ func (s *Scanner) DetectDatabase() (*config.DatabaseConfig, string, error) {
 				managed := true
 				dbConfig.Managed = &managed
 			}
-			return dbConfig, "", nil
+			return dbConfig, nil, nil
 		}
 	}
 
-	// Check .env for DATABASE_URL
-	if env, err := s.GetEnvFile(".env"); err == nil {
+	// Check .env + .env.local for DATABASE_URL (.env.local overrides,
+	// as Symfony does at runtime — reading only .env silently detects
+	// the wrong database)
+	if env, err := s.GetMergedEnv(); err == nil {
 		if dbURL, ok := env["DATABASE_URL"]; ok {
 			driver, version := parseDBURL(dbURL)
 			if driver != "" {
+				var warnings []string
+				if w := s.envDivergenceWarning(driver); w != "" {
+					warnings = append(warnings, w)
+				}
 				dbConfig.Driver = driver
 				dbConfig.Version = version
 				// SQLite: extract path and don't set managed
@@ -76,7 +83,7 @@ func (s *Scanner) DetectDatabase() (*config.DatabaseConfig, string, error) {
 					managed := true
 					dbConfig.Managed = &managed
 				}
-				return dbConfig, "", nil
+				return dbConfig, warnings, nil
 			}
 		}
 	}
@@ -84,7 +91,7 @@ func (s *Scanner) DetectDatabase() (*config.DatabaseConfig, string, error) {
 	// Check composer.json for database packages
 	composer, err := s.ParseComposer()
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 
 	// Detect from installed packages
@@ -102,16 +109,42 @@ func (s *Scanner) DetectDatabase() (*config.DatabaseConfig, string, error) {
 			dbConfig.Version = "16"
 			managed := true
 			dbConfig.Managed = &managed
-			return dbConfig, "no database driver explicitly configured, defaulting to PostgreSQL. Set DATABASE_URL in .env or configure doctrine.yaml to silence this warning", nil
+			return dbConfig, []string{"no database driver explicitly configured, defaulting to PostgreSQL. Set DATABASE_URL in .env or configure doctrine.yaml to silence this warning"}, nil
 		}
 		managed := true
 		dbConfig.Managed = &managed
-		return dbConfig, "", nil
+		return dbConfig, nil, nil
 	}
 
 	// No database detected
-	return nil, "", nil
+	return nil, nil, nil
 }
+
+// envDivergenceWarning returns a warning when .env and .env.local declare
+// DATABASE_URLs with different drivers (the .env.local one wins).
+func (s *Scanner) envDivergenceWarning(effectiveDriver string) string {
+	base, baseErr := s.GetEnvFile(".env")
+	local, localErr := s.GetEnvFile(".env.local")
+	if baseErr != nil || localErr != nil {
+		return ""
+	}
+	baseURL, okBase := base["DATABASE_URL"]
+	localURL, okLocal := local["DATABASE_URL"]
+	if !okBase || !okLocal {
+		return ""
+	}
+	baseDriver, _ := parseDBURL(baseURL)
+	localDriver, _ := parseDBURL(localURL)
+	if baseDriver != "" && localDriver != "" && baseDriver != localDriver {
+		return fmt.Sprintf("DATABASE_URL differs between .env (%s) and .env.local (%s): using .env.local (%s), which is what Symfony does at runtime",
+			baseDriver, localDriver, effectiveDriver)
+	}
+	return ""
+}
+
+// serverVersionRegex matches the serverVersion query parameter, including
+// MariaDB forms ("10.11.2-MariaDB", "mariadb-10.11.2").
+var serverVersionRegex = regexp.MustCompile(`serverversion=([a-z0-9.-]+)`)
 
 // parseDBURL extracts driver and version from DATABASE_URL
 func parseDBURL(url string) (string, string) {
@@ -119,21 +152,37 @@ func parseDBURL(url string) (string, string) {
 	url = strings.ToLower(url)
 
 	var driver string
-	if strings.HasPrefix(url, "postgresql://") || strings.HasPrefix(url, "postgres://") {
+	switch {
+	case strings.HasPrefix(url, "postgresql://"), strings.HasPrefix(url, "postgres://"), strings.HasPrefix(url, "pgsql://"):
 		driver = "pgsql"
-	} else if strings.HasPrefix(url, "mysql://") {
+	case strings.HasPrefix(url, "mariadb://"):
+		driver = "mariadb"
+	case strings.HasPrefix(url, "mysql://"), strings.HasPrefix(url, "mysql2://"):
 		driver = "mysql"
-	} else if strings.HasPrefix(url, "sqlite://") {
+	case strings.HasPrefix(url, "sqlite://"), strings.HasPrefix(url, "sqlite:"):
 		driver = "sqlite"
-	} else {
+	default:
 		return "", ""
 	}
 
-	// Try to extract version from serverVersion parameter
-	version := getDefaultVersion(driver)
-	re := regexp.MustCompile(`serverversion=([0-9.]+)`)
-	if matches := re.FindStringSubmatch(url); len(matches) > 1 {
-		version = matches[1]
+	// Try to extract version from serverVersion parameter. A MariaDB
+	// serverVersion silently produced a nonexistent mysql:X image before:
+	// detect it and switch to the mariadb driver/image.
+	version := ""
+	if matches := serverVersionRegex.FindStringSubmatch(url); len(matches) > 1 {
+		v := matches[1]
+		switch {
+		case strings.HasSuffix(v, "-mariadb"):
+			driver = "mariadb"
+			v = strings.TrimSuffix(v, "-mariadb")
+		case strings.HasPrefix(v, "mariadb-"):
+			driver = "mariadb"
+			v = strings.TrimPrefix(v, "mariadb-")
+		}
+		version = v
+	}
+	if version == "" {
+		version = getDefaultVersion(driver)
 	}
 
 	return driver, version
@@ -146,6 +195,8 @@ func getDefaultVersion(driver string) string {
 		return "16"
 	case "mysql":
 		return "8.0"
+	case "mariadb":
+		return "11"
 	case "sqlite":
 		return "3"
 	default:

@@ -59,6 +59,10 @@ type AssetsConfig struct {
 	// NodeVersion is the Node.js major version for the asset build stage
 	// (default: 22)
 	NodeVersion string `yaml:"node_version,omitempty"`
+	// Tailwind: with symfonycasts/tailwind-bundle (AssetMapper),
+	// tailwind:build must run before asset-map:compile or the site
+	// deploys without CSS.
+	Tailwind bool `yaml:"tailwind,omitempty"`
 }
 
 // MessengerConfig holds Symfony Messenger worker configuration.
@@ -180,8 +184,15 @@ type ScanResult struct {
 	// HasFrankenPHPRuntime is true when runtime/frankenphp-symfony is in
 	// composer.json, making the app eligible for FrankenPHP worker mode.
 	HasFrankenPHPRuntime bool
-	Framework            string
-	Warnings             []string
+	// HasScheduler is true when symfony/scheduler is installed: its
+	// scheduler_* transports must be consumed or scheduled tasks
+	// silently never run.
+	HasScheduler bool
+	// MessengerTransports are the transports to consume, read from
+	// messenger.yaml (failure and sync transports excluded).
+	MessengerTransports []string
+	Framework           string
+	Warnings            []string
 }
 
 // DefaultProjectConfig returns a default project configuration

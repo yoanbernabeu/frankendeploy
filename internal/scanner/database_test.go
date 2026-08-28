@@ -180,8 +180,8 @@ func TestDetectDatabase_FallbackWarning(t *testing.T) {
 	if dbConfig.Driver != "pgsql" {
 		t.Errorf("expected driver pgsql, got %q", dbConfig.Driver)
 	}
-	if warning == "" {
-		t.Error("expected warning for PostgreSQL fallback, got empty string")
+	if len(warning) == 0 {
+		t.Error("expected warning for PostgreSQL fallback, got none")
 	}
 }
 
@@ -212,7 +212,7 @@ func TestDetectDatabase_NoWarningExplicit(t *testing.T) {
 	if dbConfig == nil {
 		t.Fatal("expected database config, got nil")
 	}
-	if warning != "" {
+	if len(warning) != 0 {
 		t.Errorf("expected no warning for explicit DATABASE_URL, got %q", warning)
 	}
 }

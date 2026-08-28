@@ -63,12 +63,11 @@ func (s *Scanner) ParseComposer() (*ComposerResult, error) {
 		result.PHPVersion = defaultPHPVersion
 	}
 
-	// Check for Symfony
-	for pkg := range composer.Require {
-		if strings.HasPrefix(pkg, "symfony/") {
-			result.HasSymfony = true
-			break
-		}
+	// Check for Symfony: only symfony/framework-bundle proves a Symfony
+	// application — individual symfony/* components are pulled by Laravel
+	// and many other projects too
+	if _, ok := composer.Require["symfony/framework-bundle"]; ok {
+		result.HasSymfony = true
 	}
 
 	// Extract PHP extensions
