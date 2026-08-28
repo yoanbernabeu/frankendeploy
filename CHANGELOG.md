@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-28
+
+This release closes the full production-readiness audit (24/24 issues): FrankenPHP worker mode, a `doctor` preflight command, pure-Go SFTP transfers, and a deployment pipeline whose failure paths are actually tested. Every change was validated live on a real VPS, including the rollback path (deliberately broken health check → previous version kept serving).
+
+### Added
+
+- **FrankenPHP Worker Mode (opt-in)**: `frankenphp.worker: true` bakes a generated Caddyfile into the production image booting the Symfony kernel once and keeping it in memory between requests; auto-enabled (with an explicit warning) when `runtime/frankenphp-symfony` is detected; `build` fails with an actionable message if the runtime package is missing; dev stays in classic mode for easier debugging (#85) - @yoanbernabeu
+- **`frankendeploy doctor`**: preflight diagnosis with actionable fixes — local Docker, SSH, passwordless sudo, remote Docker usable without sudo, `frankendeploy` network, Caddy container, disk space, and the domain's DNS compared against the server's real public IP (asked to the server itself, so gateway/NAT setups are handled) — the #1 cause of Let's Encrypt failures; suggested in deploy error messages (#90) - @yoanbernabeu
+- **Pure-Go SFTP Transfers**: image and source uploads now run over the existing SSH connection (`pkg/sftp`) — no scp/rsync binaries (rsync does not exist on Windows), no second handshake ignoring `FRANKENDEPLOY_SSH_KEY`/known-hosts; images are gzip-compressed before upload (~3× smaller, 674→233 MB measured), size and progress always shown, and the total deploy duration is displayed (#89) - @yoanbernabeu
+- **Smarter Detection**: `DATABASE_URL` read from `.env` + `.env.local` merged (`.env.local` wins, divergence announced); full MariaDB support (`mariadb:X` image, `healthcheck.sh`, `mariadb-dump`, `-MariaDB` serverVersion suffix); PHP extensions inferred from packages and announced (`liip/imagine-bundle`→gd, `snc/redis-bundle`→redis, `phpoffice/*`→gd+zip, `pcntl` with Messenger, amqp/redis only when a matching transport DSN exists); `symfonycasts/tailwind-bundle` triggers `tailwind:build` before `asset-map:compile` (the site deployed without CSS otherwise); Messenger transports read from `messenger.yaml` instead of a hardcoded `async`; `symfony/scheduler` gets `scheduler_default` consumed; asset build tool follows the lockfile (pnpm/yarn/npm) (#86) - @yoanbernabeu
+- **OS Detection in Server Setup**: `/etc/os-release` checked before any change with an explicit error listing supported distributions (Debian/Ubuntu and derivatives); passwordless sudo preflight with the NOPASSWD one-liner; `--email` format validated upfront (#87) - @yoanbernabeu
+
+### Changed
+
+- **Testable Deployment Pipeline**: the blue-green orchestration is now `deploy.RunPipeline` with injectable steps — rollback triggering, `--force`, `--skip-healthcheck`, swap failures and first-exposure Caddy semantics are unit-tested (14 scenarios) (#88) - @yoanbernabeu
+- **Unified Caddy Generation**: dead templates removed (`caddy-app.tmpl`, `setup.sh.tmpl`, `security.sh.tmpl`); the generated app config gains HSTS and access-log rotation, and drops the deprecated `X-XSS-Protection`; shell-injection detection unified in `security.FindShellInjection` (#84) - @yoanbernabeu
+- **Explicit Failure Policy in Server Setup**: each setup command declares `allowFailure` instead of the `|| `/`2>/dev/null` substring heuristics — a failed Docker install now aborts the setup instead of passing silently (#87) - @yoanbernabeu
+- **No Default `cache:warmup` Post-Deploy Hook**: the cache is warmed at image build time; the default hook ran on the LIVE container after the swap (#88) - @yoanbernabeu
+
+### Fixed
+
+- **Managed Database Credentials Regeneration**: a stopped database container (VPS reboot, crash) with saved credentials is now started and reused — previously it was recreated with a NEW password that postgres/mysql ignore when the data directory exists, leaving a wrong saved URL and auth errors everywhere; an orphaned data volume without credentials fails explicitly with a recovery procedure; the readiness wait now fails the deploy instead of continuing silently (#88) - @yoanbernabeu
+- **Duplicated YAML Keys in Generated Compose**: overriding `APP_ENV`/`APP_DEBUG`/`SERVER_NAME`/`DATABASE_URL` via `env.dev`/`env.prod` produced duplicate mapping keys (invalid YAML); template defaults are now emitted only when not overridden (#88) - @yoanbernabeu
+- **Laravel False Positive**: `init` no longer detects any project pulling a `symfony/*` component as a Symfony app — `symfony/framework-bundle` is required (#86) - @yoanbernabeu
+- **Hung Remote Commands**: SSH command execution now honors context cancellation — a stuck remote `docker build` or an interactive apt prompt no longer blocks the CLI forever (#89) - @yoanbernabeu
+- **Config Validated on Every Load**: a hand-edited invalid `frankendeploy.yaml` is rejected by every command (deploy included), and the global config rejects unknown fields like the project config (#86) - @yoanbernabeu
+
 ## [0.12.0] - 2026-07-21
 
 This release makes long-running servers sustainable: the database gets a safety net before every migration, and neither Docker images nor container logs can fill the VPS disk anymore. All changes were validated live on a real VPS (managed PostgreSQL, real Doctrine migrations).
@@ -169,7 +196,8 @@ This release closes every P0 finding from the production-readiness audit. All fi
 
 Initial public release with core deployment features.
 
-[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.9.0...v0.10.0
