@@ -77,7 +77,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	// Step 1: Connect to server (validates name, loads config, applies SSHTimeout)
 	conn, err := ConnectToServer(serverName)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w\n\nRun 'frankendeploy doctor %s' to diagnose the server setup", err, serverName)
 	}
 	defer conn.Client.Close()
 
@@ -134,13 +134,13 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		// Remote build: transfer source code and build on server
 		PrintInfo("Transferring source code to server...")
 		if err := transferSourceCode(ctx, client, projectCfg.Name, remoteAppPath); err != nil {
-			return fmt.Errorf("transfer failed: %w", err)
+			return fmt.Errorf("transfer failed: %w\n\nRun 'frankendeploy doctor %s' to diagnose the server setup", err, serverName)
 		}
 		PrintSuccess("Source code transferred")
 
 		PrintInfo("Building Docker image on server...")
 		if err := buildDockerImageRemote(ctx, client, imageName, remoteAppPath); err != nil {
-			return fmt.Errorf("remote build failed: %w", err)
+			return fmt.Errorf("remote build failed: %w\n\nRun 'frankendeploy doctor %s' to diagnose the server setup", err, serverName)
 		}
 		PrintSuccess("Image built: %s", imageName)
 	} else {
