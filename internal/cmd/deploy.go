@@ -2,8 +2,6 @@ package cmd
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,7 +15,6 @@ import (
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
 	"github.com/yoanbernabeu/frankendeploy/internal/constants"
 	"github.com/yoanbernabeu/frankendeploy/internal/deploy"
-	"github.com/yoanbernabeu/frankendeploy/internal/generator"
 	"github.com/yoanbernabeu/frankendeploy/internal/security"
 	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
 )
@@ -166,7 +163,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	if projectCfg.Database.Driver != "" && projectCfg.Database.IsManaged() {
 		PrintInfo("Setting up managed database...")
 		var err error
-		databaseURL, err = deployManagedDatabase(ctx, client, projectCfg, remoteAppPath)
+		databaseURL, err = deploy.DeployManagedDatabase(ctx, client, projectCfg, remoteAppPath, cmdLogger{})
 		if err != nil {
 			return fmt.Errorf("database setup failed: %w", err)
 		}
@@ -176,150 +173,83 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	// Blue-green deployment: start new container with temp name, health check, then swap
 	state := deploy.NewDeployState(projectCfg.Name)
 
-	// Step 4: Prepare release directories and shared volumes
-	PrintInfo("Preparing release...")
-	state.Phase = deploy.PhasePrepareRelease
-	if err := prepareRelease(ctx, client, projectCfg, remoteAppPath, deployTag); err != nil {
-		return fmt.Errorf("deployment failed: %w", err)
-	}
-
-	// Check if old container exists (for swap phase)
-	if oldResult, err := client.Exec(ctx, fmt.Sprintf("docker ps -q -f name=^%s$", projectCfg.Name)); err == nil && oldResult != nil {
-		state.OldContainerExists = strings.TrimSpace(oldResult.Stdout) != ""
-	}
-
-	// Step 5: Start new container with temporary name (old container still running)
-	PrintInfo("Starting new version (blue-green)...")
-	state.Phase = deploy.PhaseStartNewContainer
-	if err := startNewContainer(ctx, client, projectCfg, imageName, remoteAppPath, deployTag, databaseURL, state.TempContainerName); err != nil {
-		return fmt.Errorf("deployment failed: %w", err)
-	}
-
-	// Step 6: Run pre-deploy hooks on the NEW container
-	hasMigrationHook := deploy.HasMigrationHook(projectCfg.Deploy.Hooks.PreDeploy)
-	migrationAttempted := false
-	var dbBackupPath string
-	if len(projectCfg.Deploy.Hooks.PreDeploy) > 0 {
-		// Step 6a: Automatic database backup before any migration. Migrations
-		// run while the old code still serves traffic: if anything fails
-		// afterwards, the container rollback does NOT roll the schema back —
-		// the dump is the only safety net.
-		if hasMigrationHook && projectCfg.Database.IsManaged() && databaseURL != "" {
-			PrintInfo("Backing up database before migration...")
-			backupPath, err := deploy.BackupManagedDatabase(ctx, client, projectCfg, databaseURL, deployTag)
-			if err != nil {
-				if !deployForce {
-					PrintWarning("Database backup failed, rolling back...")
-					rollbackNewContainer(ctx, client, state)
-					return fmt.Errorf("database backup failed (use --force to deploy without a backup): %w", err)
-				}
-				PrintWarning("Database backup failed but continuing (--force): %v", err)
-			} else {
-				dbBackupPath = backupPath
-				PrintSuccess("Database backup: %s", backupPath)
+	// Steps 4-11: blue-green orchestration (extracted to internal/deploy,
+	// tested per failure scenario in orchestrator_test.go)
+	steps := deploy.Steps{
+		PrepareRelease: func() error {
+			return prepareRelease(ctx, client, projectCfg, remoteAppPath, deployTag)
+		},
+		OldContainerExists: func() bool {
+			if oldResult, err := client.Exec(ctx, fmt.Sprintf("docker ps -q -f name=^%s$", projectCfg.Name)); err == nil && oldResult != nil {
+				return strings.TrimSpace(oldResult.Stdout) != ""
 			}
-		}
-
-		PrintInfo("Running pre-deploy hooks...")
-		state.Phase = deploy.PhasePreDeployHooks
-		migrationAttempted = hasMigrationHook
-		if err := runDeployHooks(ctx, client, state.TempContainerName, projectCfg.Deploy.Hooks.PreDeploy); err != nil {
-			if !deployForce {
-				PrintWarning("Pre-deploy hooks failed, rolling back...")
-				rollbackNewContainer(ctx, client, state)
-				if hasMigrationHook {
-					warnDatabaseMigrationRollback("The migration may have been partially applied (non-transactional DDL on MySQL/MariaDB leaves a partial schema).", dbBackupPath)
-				}
-				return fmt.Errorf("pre-deploy hooks failed: %w", err)
-			}
-			PrintWarning("Pre-deploy hooks failed but continuing (--force)")
-		}
-
-		// Check for empty migrations if migration hook was run
-		if hasMigrationHook {
+			return false
+		},
+		StartNewContainer: func() error {
+			return startNewContainer(ctx, client, projectCfg, imageName, remoteAppPath, deployTag, databaseURL, state.TempContainerName)
+		},
+		BackupDatabase: func() (string, error) {
+			return deploy.BackupManagedDatabase(ctx, client, projectCfg, databaseURL, deployTag)
+		},
+		RunPreDeployHooks: func() error {
+			return runDeployHooks(ctx, client, state.TempContainerName, projectCfg.Deploy.Hooks.PreDeploy)
+		},
+		CheckMigrationState: func() {
 			checkAndWarnMigrationState(ctx, client, state.TempContainerName)
-		}
-	}
-
-	// Step 7: Health check on the NEW container (old still running = zero downtime)
-	if deploySkipHealthcheck {
-		PrintWarning("Health check skipped (--skip-healthcheck)")
-	} else {
-		PrintInfo("Running health check...")
-		state.Phase = deploy.PhaseHealthCheck
-		if err := runHealthCheckOnContainer(ctx, client, projectCfg, state.TempContainerName); err != nil {
+		},
+		HealthCheck: func() error {
+			return runHealthCheckOnContainer(ctx, client, projectCfg, state.TempContainerName)
+		},
+		ShowContainerLogs: func() {
 			showContainerLogs(ctx, client, state.TempContainerName)
-			if !deployForce {
-				PrintWarning("Health check failed, rolling back...")
-				rollbackNewContainer(ctx, client, state)
-				if migrationAttempted {
-					warnDatabaseMigrationRollback("The database was already migrated during this deploy.", dbBackupPath)
-				}
-				return fmt.Errorf("deployment failed health check: %w", err)
+		},
+		SwapContainers: func(oldExists bool) error {
+			return swapContainers(ctx, client, projectCfg.Name, remoteAppPath, deployTag, state.TempContainerName, oldExists)
+		},
+		DeployWorkers: func() error {
+			return deployMessengerWorkers(ctx, client, projectCfg, imageName, remoteAppPath, databaseURL)
+		},
+		RunPostDeployHooks: func() error {
+			return runDeployHooks(ctx, client, projectCfg.Name, projectCfg.Deploy.Hooks.PostDeploy)
+		},
+		CaddyAppConfigExists: func() bool {
+			return caddyAppConfigExists(ctx, client, projectCfg.Name)
+		},
+		UpdateCaddy: func() error {
+			return updateCaddyConfig(ctx, client, projectCfg)
+		},
+		Cleanup: func() {
+			cleanupOldReleases(ctx, client, remoteAppPath, projectCfg.Deploy.KeepReleases)
+			// Prune images whose tag left the retention window: each deploy
+			// leaves a full image behind, and a small VPS fills up after a few
+			// dozen deploys
+			if removed, err := deploy.PruneOldImages(ctx, client, projectCfg.Name, remoteAppPath); err != nil {
+				PrintVerbose("Could not prune old images: %v", err)
+			} else if len(removed) > 0 {
+				PrintInfo("Removed %d old image(s): %s", len(removed), strings.Join(removed, ", "))
 			}
-			PrintWarning("Health check failed but continuing (--force)")
-		} else {
-			PrintSuccess("Health check passed")
-		}
+		},
+		RollbackNewContainer: func(st *deploy.DeployState) {
+			rollbackNewContainer(ctx, client, st)
+		},
+		WarnMigrationRollback: warnDatabaseMigrationRollback,
 	}
 
-	// Step 8: Swap containers (rename old away, rename new → final, stop old, update symlink)
-	PrintInfo("Swapping containers...")
-	state.Phase = deploy.PhaseSwapContainers
-	if err := swapContainers(ctx, client, projectCfg.Name, remoteAppPath, deployTag, state.TempContainerName, state.OldContainerExists); err != nil {
-		rollbackNewContainer(ctx, client, state)
-		if migrationAttempted {
-			warnDatabaseMigrationRollback("The database was already migrated during this deploy.", dbBackupPath)
-		}
-		return fmt.Errorf("swap failed: %w", err)
+	opts := deploy.Options{
+		Force:              deployForce,
+		SkipHealthcheck:    deploySkipHealthcheck,
+		HasPreDeployHooks:  len(projectCfg.Deploy.Hooks.PreDeploy) > 0,
+		HasMigrationHook:   deploy.HasMigrationHook(projectCfg.Deploy.Hooks.PreDeploy),
+		BackupEligible:     projectCfg.Database.IsManaged() && databaseURL != "",
+		HasPostDeployHooks: len(projectCfg.Deploy.Hooks.PostDeploy) > 0,
+		MessengerEnabled:   projectCfg.Messenger.Enabled,
+		Domain:             projectCfg.Deploy.Domain,
+		Logger:             cmdLogger{},
 	}
 
-	// Step 8b: Deploy Messenger worker if enabled
-	if projectCfg.Messenger.Enabled {
-		PrintInfo("Starting Messenger worker...")
-		if err := deployMessengerWorkers(ctx, client, projectCfg, imageName, remoteAppPath, databaseURL); err != nil {
-			PrintWarning("Failed to start Messenger worker: %v", err)
-		} else {
-			PrintSuccess("Messenger worker started")
-		}
+	if err := deploy.RunPipeline(state, steps, opts); err != nil {
+		return err
 	}
-
-	// Step 9: Run post_deploy hooks
-	state.Phase = deploy.PhasePostDeployHooks
-	if len(projectCfg.Deploy.Hooks.PostDeploy) > 0 {
-		PrintInfo("Running post-deploy hooks...")
-		if err := runDeployHooks(ctx, client, projectCfg.Name, projectCfg.Deploy.Hooks.PostDeploy); err != nil {
-			PrintWarning("Post-deploy hooks failed: %v", err)
-		}
-	}
-
-	// Step 10: Update Caddy config. On the app's FIRST public exposure this is
-	// THE condition for reachability: failing must fail the deploy instead of
-	// printing a success message with an unreachable https URL. On later
-	// deploys the existing Caddy config still routes to the swapped container,
-	// so a reload failure only warrants a warning.
-	firstExposure := projectCfg.Deploy.Domain != "" && !caddyAppConfigExists(ctx, client, projectCfg.Name)
-	PrintInfo("Updating reverse proxy...")
-	if err := updateCaddyConfig(ctx, client, projectCfg); err != nil {
-		if firstExposure {
-			return fmt.Errorf("reverse proxy configuration failed — the application is running on the server but NOT publicly reachable: %w", err)
-		}
-		PrintWarning("Failed to update Caddy: %v", err)
-	}
-
-	// Step 11: Cleanup old releases
-	state.Phase = deploy.PhaseCleanup
-	PrintInfo("Cleaning up old releases...")
-	cleanupOldReleases(ctx, client, remoteAppPath, projectCfg.Deploy.KeepReleases)
-
-	// Prune images whose tag left the retention window: each deploy leaves a
-	// full image behind, and a small VPS fills up after a few dozen deploys
-	if removed, err := deploy.PruneOldImages(ctx, client, projectCfg.Name, remoteAppPath); err != nil {
-		PrintVerbose("Could not prune old images: %v", err)
-	} else if len(removed) > 0 {
-		PrintInfo("Removed %d old image(s): %s", len(removed), strings.Join(removed, ", "))
-	}
-	state.Phase = deploy.PhaseDone
 
 	PrintSuccess("Deployment complete!")
 	fmt.Println()
@@ -974,113 +904,6 @@ func deployMessengerWorkers(ctx context.Context, client ssh.Executor, cfg *confi
 	}
 
 	return nil
-}
-
-// deployManagedDatabase creates and manages a database container for the app
-func deployManagedDatabase(ctx context.Context, client ssh.Executor, cfg *config.ProjectConfig, appPath string) (string, error) {
-	dbContainerName := fmt.Sprintf("%s-db", cfg.Name)
-	dbName := strings.ReplaceAll(cfg.Name, "-", "_")
-	credentialsFile := filepath.Join(appPath, "shared", ".db_credentials")
-
-	// Get driver info from registry (single source of truth)
-	info, err := generator.GetDBDriverInfo(cfg.Database.Driver)
-	if err != nil {
-		return "", fmt.Errorf("unsupported database driver for managed mode: %s", cfg.Database.Driver)
-	}
-
-	// Check if database container already exists and is running
-	checkResult, checkErr := client.Exec(ctx, fmt.Sprintf("docker ps -q -f name=%s", dbContainerName))
-	if checkErr == nil && strings.TrimSpace(checkResult.Stdout) != "" {
-		// Container exists, read existing credentials
-		credResult, credErr := client.Exec(ctx, fmt.Sprintf("cat %s 2>/dev/null", credentialsFile))
-		if credErr == nil && credResult.ExitCode == 0 && credResult.Stdout != "" {
-			PrintVerbose("Using existing database container")
-			return strings.TrimSpace(credResult.Stdout), nil
-		}
-	}
-
-	// Generate credentials
-	dbUser := cfg.Name
-	dbPassword, err := generateRandomPassword(24)
-	if err != nil {
-		return "", err
-	}
-
-	// Use configured version or registry default
-	version := cfg.Database.Version
-	if version == "" {
-		version = info.DefaultVersion
-	}
-
-	// Build database configuration from registry
-	dockerImage := info.FullImage(version)
-	dockerEnv := info.BuildEnvArgs(
-		security.ShellEscape(dbUser),
-		security.ShellEscape(dbPassword),
-		security.ShellEscape(dbName),
-	)
-	databaseURL := info.BuildDatabaseURL(dbUser, dbPassword, dbContainerName, dbName, version)
-
-	// Stop and remove existing container if exists (for recreation)
-	stopAndRemoveContainer(ctx, client, dbContainerName)
-
-	// Create database container with persistent volume
-	dbRunCmd := fmt.Sprintf(`docker run -d --name %s \
-		--network %s \
-		--restart unless-stopped \
-		%s \
-		%s \
-		-v %s-data:%s \
-		%s`,
-		dbContainerName,
-		constants.NetworkName,
-		constants.DockerLogOptions,
-		dockerEnv,
-		dbContainerName,
-		info.DataVolumePath,
-		dockerImage)
-
-	result, err := client.Exec(ctx, dbRunCmd)
-	if err != nil {
-		return "", fmt.Errorf("failed to start database container: %w", err)
-	}
-	if err := result.Err(); err != nil {
-		return "", fmt.Errorf("failed to start database container: %w", err)
-	}
-
-	// Save credentials to file
-	if _, err := client.Exec(ctx, fmt.Sprintf("echo %s > %s", security.ShellEscape(databaseURL), credentialsFile)); err != nil {
-		return "", fmt.Errorf("failed to save database credentials: %w", err)
-	}
-	if _, err := client.Exec(ctx, fmt.Sprintf("chmod 600 %s", credentialsFile)); err != nil {
-		PrintWarning("Could not set permissions on credentials file: %v", err)
-	}
-
-	// Wait for database to be ready
-	PrintVerbose("Waiting for database to be ready...")
-	for i := 0; i < 30; i++ {
-		healthCmd := info.BuildHealthCmd(
-			dbContainerName,
-			security.ShellEscape(dbUser),
-			security.ShellEscape(dbPassword),
-		)
-		checkResult, _ := client.Exec(ctx, healthCmd)
-		if checkResult != nil && checkResult.ExitCode == 0 {
-			break
-		}
-		time.Sleep(1 * time.Second)
-	}
-
-	return databaseURL, nil
-}
-
-// generateRandomPassword generates a secure random password
-func generateRandomPassword(length int) (string, error) {
-	b := make([]byte, length/2)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("failed to generate random password: %w", err)
-	}
-	return hex.EncodeToString(b), nil
 }
 
 // runEnvPreflightCheck verifies required environment variables before deployment
