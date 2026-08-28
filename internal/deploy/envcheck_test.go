@@ -119,10 +119,10 @@ func TestGenerateSymfonySecret(t *testing.T) {
 
 func TestGenerateMissingSecrets(t *testing.T) {
 	tests := []struct {
-		name        string
-		missing     []EnvRequirement
-		wantKeys    []string
-		wantEmpty   bool
+		name      string
+		missing   []EnvRequirement
+		wantKeys  []string
+		wantEmpty bool
 	}{
 		{
 			name:      "empty missing list",
@@ -288,10 +288,10 @@ func TestBuildEnvContent(t *testing.T) {
 // ordering that produced noisy diffs on every env file rewrite.
 func TestBuildEnvContent_DeterministicOrdering(t *testing.T) {
 	vars := map[string]string{
-		"ZEBRA":       "z",
-		"APP_ENV":     "prod",
+		"ZEBRA":        "z",
+		"APP_ENV":      "prod",
 		"DATABASE_URL": "postgres://u:p@h/db",
-		"APP_SECRET":  "abc",
+		"APP_SECRET":   "abc",
 	}
 
 	// Calling buildEnvContent repeatedly must produce the exact same bytes.

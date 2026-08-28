@@ -33,8 +33,6 @@ var dockerfileInstructions = []string{
 }
 
 // shellInjectionPatterns are sequences blocked in extra commands.
-var shellInjectionPatterns = []string{"$(", "`", ";", "&&", "||", "|", ">", "<", "\n", "\r"}
-
 // ValidateDockerfileData validates inputs before Dockerfile generation.
 func ValidateDockerfileData(data DockerfileData) error {
 	if !config.IsValidPHPVersion(data.PHP.Version) {
@@ -69,10 +67,8 @@ func ValidateDockerfileData(data DockerfileData) error {
 	}
 
 	for _, cmd := range data.Dockerfile.ExtraCommands {
-		for _, pattern := range shellInjectionPatterns {
-			if strings.Contains(cmd, pattern) {
-				return fmt.Errorf("extra command contains potentially dangerous sequence %q", pattern)
-			}
+		if pattern := security.FindShellInjection(cmd); pattern != "" {
+			return fmt.Errorf("extra command contains potentially dangerous sequence %q", pattern)
 		}
 		if !isValidDockerfileInstruction(cmd) {
 			return fmt.Errorf("extra command %q must start with a valid Dockerfile instruction (RUN, COPY, ARG, ENV, etc.)", cmd)

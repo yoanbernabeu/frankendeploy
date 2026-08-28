@@ -207,6 +207,35 @@ func ValidateEnvKey(key string) error {
 	return nil
 }
 
+// shellInjectionPatterns lists shell metacharacter sequences that enable
+// command injection. Single source of truth shared by ValidateDockerCommand
+// and the generator's Dockerfile extra-command validation.
+var shellInjectionPatterns = []string{
+	";",  // Command separator
+	"&&", // Command chaining
+	"||", // Command chaining
+	"|",  // Pipe
+	"`",  // Command substitution
+	"$(", // Command substitution
+	">",  // Redirect
+	"<",  // Redirect
+	"\n", // Newline (command injection)
+	"\r", // Carriage return
+}
+
+// FindShellInjection returns the first dangerous shell metacharacter sequence
+// found in s, or "" if none. Note: "${" is intentionally not in the shared
+// list — Dockerfile extra commands legitimately use build-arg expansion —
+// but ValidateDockerCommand rejects it in addition.
+func FindShellInjection(s string) string {
+	for _, pattern := range shellInjectionPatterns {
+		if strings.Contains(s, pattern) {
+			return pattern
+		}
+	}
+	return ""
+}
+
 // ValidateDockerCommand validates a command to be executed in a container
 // This function checks for common shell injection patterns
 func ValidateDockerCommand(command string) error {
@@ -214,25 +243,12 @@ func ValidateDockerCommand(command string) error {
 		return fmt.Errorf("command cannot be empty")
 	}
 
-	// Check for dangerous shell metacharacters in suspicious contexts
-	dangerousPatterns := []string{
-		";",  // Command separator
-		"&&", // Command chaining
-		"||", // Command chaining
-		"|",  // Pipe
-		"`",  // Command substitution
-		"$(", // Command substitution
-		"${", // Variable expansion (could be dangerous)
-		">",  // Redirect
-		"<",  // Redirect
-		"\n", // Newline (command injection)
-		"\r", // Carriage return
+	if pattern := FindShellInjection(command); pattern != "" {
+		return fmt.Errorf("command contains potentially dangerous character sequence: %q", pattern)
 	}
-
-	for _, pattern := range dangerousPatterns {
-		if strings.Contains(command, pattern) {
-			return fmt.Errorf("command contains potentially dangerous character sequence: %q", pattern)
-		}
+	// Variable expansion could be dangerous inside docker exec
+	if strings.Contains(command, "${") {
+		return fmt.Errorf("command contains potentially dangerous character sequence: %q", "${")
 	}
 
 	return nil

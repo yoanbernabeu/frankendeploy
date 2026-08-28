@@ -13,9 +13,9 @@ var (
 	Version = "dev"
 
 	// Global flags
-	verbose   bool
-	cfgFile   string
-	yesFlag   bool // CI/CD: skip confirmations
+	verbose bool
+	cfgFile string
+	yesFlag bool // CI/CD: skip confirmations
 )
 
 var rootCmd = &cobra.Command{
