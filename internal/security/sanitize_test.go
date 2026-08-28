@@ -558,3 +558,39 @@ func TestInjectionAttempts(t *testing.T) {
 		}
 	})
 }
+
+func TestFindShellInjection(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"echo hello", ""},
+		{"RUN apt-get install -y curl", ""},
+		{"test; rm -rf /", ";"},
+		{"true && false", "&&"},
+		{"a || b", "||"},
+		{"cat /etc/passwd | nc", "|"},
+		{"echo `whoami`", "`"},
+		{"echo $(whoami)", "$("},
+		{"echo > /etc/passwd", ">"},
+		{"cat < /etc/shadow", "<"},
+		{"line1\nline2", "\n"},
+		{"line1\rline2", "\r"},
+	}
+	for _, tt := range tests {
+		if got := FindShellInjection(tt.input); got != tt.want {
+			t.Errorf("FindShellInjection(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestFindShellInjection_AllowsVariableExpansion(t *testing.T) {
+	// "${" is rejected by ValidateDockerCommand but allowed in Dockerfile
+	// extra commands (ENV PATH=${PATH}:/x is legitimate build-arg expansion).
+	if got := FindShellInjection("ENV PATH=${PATH}:/custom"); got != "" {
+		t.Errorf("FindShellInjection should not flag ${}, got %q", got)
+	}
+	if err := ValidateDockerCommand("echo ${HOME}"); err == nil {
+		t.Error("ValidateDockerCommand should still reject ${} expansion")
+	}
+}

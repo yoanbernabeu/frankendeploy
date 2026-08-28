@@ -51,6 +51,7 @@ func (g *ConfigGenerator) GenerateAppConfig(app AppConfig) (string, error) {
     encode zstd gzip
 
     header {
+        Strict-Transport-Security "max-age=31536000"
         X-Content-Type-Options nosniff
         X-Frame-Options DENY
         Referrer-Policy strict-origin-when-cross-origin
@@ -58,7 +59,10 @@ func (g *ConfigGenerator) GenerateAppConfig(app AppConfig) (string, error) {
     }
 
     log {
-        output file /config/logs/{{ .Name }}.log
+        output file /config/logs/{{ .Name }}.log {
+            roll_size 10mb
+            roll_keep 5
+        }
         format json
     }
 }

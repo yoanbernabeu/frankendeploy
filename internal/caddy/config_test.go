@@ -149,3 +149,50 @@ func TestRemoveAppConfigCommands(t *testing.T) {
 		t.Errorf("second command should reload Caddy, got: %s", cmds[1])
 	}
 }
+
+func TestGenerateAppConfig_IncludesHSTS(t *testing.T) {
+	gen := NewConfigGenerator()
+	out, err := gen.GenerateAppConfig(AppConfig{
+		Name:   "myapp",
+		Domain: "example.com",
+		Port:   8080,
+	})
+	if err != nil {
+		t.Fatalf("GenerateAppConfig: %v", err)
+	}
+	if !strings.Contains(out, `Strict-Transport-Security "max-age=31536000"`) {
+		t.Errorf("expected HSTS header in generated config:\n%s", out)
+	}
+}
+
+func TestGenerateAppConfig_DoesNotEmitDeprecatedXXSSProtection(t *testing.T) {
+	gen := NewConfigGenerator()
+	out, err := gen.GenerateAppConfig(AppConfig{
+		Name:   "myapp",
+		Domain: "example.com",
+		Port:   8080,
+	})
+	if err != nil {
+		t.Fatalf("GenerateAppConfig: %v", err)
+	}
+	if strings.Contains(out, "X-XSS-Protection") {
+		t.Errorf("generated config must not contain deprecated X-XSS-Protection:\n%s", out)
+	}
+}
+
+func TestGenerateAppConfig_LogRotation(t *testing.T) {
+	gen := NewConfigGenerator()
+	out, err := gen.GenerateAppConfig(AppConfig{
+		Name:   "myapp",
+		Domain: "example.com",
+		Port:   8080,
+	})
+	if err != nil {
+		t.Fatalf("GenerateAppConfig: %v", err)
+	}
+	for _, want := range []string{"roll_size 10mb", "roll_keep 5"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in log block (unbounded Caddy access logs fill the disk):\n%s", want, out)
+		}
+	}
+}
