@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/mail"
 	"strconv"
 	"strings"
 
@@ -308,19 +309,19 @@ func autoTryKeys(serverCfg *config.ServerConfig, keys []ssh.SSHKeyInfo) *ssh.SSH
 // port is allowed before ufw is enabled: never enable the firewall without
 // having allowed the port(s) SSH is reachable on, or the user gets locked
 // out of their own server. Invalid ports (<= 0) are filtered out.
-func buildFirewallCommands(sshPorts []int) []string {
-	cmds := make([]string, 0, len(sshPorts)+3)
+func buildFirewallCommands(sshPorts []int) []setupCommand {
+	cmds := make([]setupCommand, 0, len(sshPorts)+3)
 	seen := make(map[int]bool)
 	for _, port := range sshPorts {
 		if port > 0 && !seen[port] {
 			seen[port] = true
-			cmds = append(cmds, fmt.Sprintf("sudo ufw allow %d/tcp || true", port))
+			cmds = append(cmds, setupCommand{cmd: fmt.Sprintf("sudo ufw allow %d/tcp", port), allowFailure: true})
 		}
 	}
 	cmds = append(cmds,
-		"sudo ufw allow 80/tcp || true",
-		"sudo ufw allow 443/tcp || true",
-		"sudo ufw --force enable || true",
+		setupCommand{cmd: "sudo ufw allow 80/tcp", allowFailure: true},
+		setupCommand{cmd: "sudo ufw allow 443/tcp", allowFailure: true},
+		setupCommand{cmd: "sudo ufw --force enable", allowFailure: true},
 	)
 	return cmds
 }
@@ -337,28 +338,37 @@ func runServerSetup(cmd *cobra.Command, args []string) error {
 	client := conn.Client
 
 	PrintSuccess("Connected to %s", conn.Server.Host)
+
+	// Validate inputs and remote environment before changing anything
+	if err := validateSetupEmail(setupEmail); err != nil {
+		return err
+	}
+	if err := preflightServerSetup(ctx, client); err != nil {
+		return err
+	}
+
 	PrintInfo("Setting up server for FrankenDeploy...")
 
 	// Step 1: System update and prerequisites
 	PrintInfo("[1/5] Installing prerequisites...")
-	prereqCommands := []string{
-		"sudo apt-get update -qq",
-		"sudo apt-get install -y -qq curl ca-certificates",
+	prereqCommands := []setupCommand{
+		{cmd: "sudo apt-get update -qq"},
+		{cmd: "sudo apt-get install -y -qq curl ca-certificates"},
 	}
-	if err := runCommandsWithProgress(ctx, client, prereqCommands); err != nil {
+	if err := runSetupCommands(ctx, client, prereqCommands); err != nil {
 		return err
 	}
 
 	// Step 2: Install and configure Fail2ban
 	PrintInfo("[2/5] Installing Fail2ban...")
-	fail2banCommands := []string{
+	fail2banCommands := []setupCommand{
 		// Install Fail2ban
-		"sudo apt-get install -y -qq fail2ban",
+		{cmd: "sudo apt-get install -y -qq fail2ban"},
 		// Enable and start Fail2ban
-		"sudo systemctl enable fail2ban",
-		"sudo systemctl start fail2ban",
+		{cmd: "sudo systemctl enable fail2ban"},
+		{cmd: "sudo systemctl start fail2ban"},
 	}
-	if err := runCommandsWithProgress(ctx, client, fail2banCommands); err != nil {
+	if err := runSetupCommands(ctx, client, fail2banCommands); err != nil {
 		return err
 	}
 
@@ -385,31 +395,32 @@ findtime = 600
 
 	// Step 3: Install Docker
 	PrintInfo("[3/5] Installing Docker...")
-	dockerCommands := []string{
-		// Install Docker if not present
-		"which docker || (curl -fsSL https://get.docker.com | sudo sh)",
-		// Add user to docker group
-		"sudo usermod -aG docker $USER || true",
+	dockerCommands := []setupCommand{
+		// Install Docker if not present. A failed install must FAIL the
+		// setup (it silently passed before because of the "|| " heuristic).
+		{cmd: "which docker || (curl -fsSL https://get.docker.com | sudo sh)"},
+		// Add user to docker group (root has no $USER group need)
+		{cmd: "sudo usermod -aG docker $USER", allowFailure: true},
 		// Enable and start Docker
-		"sudo systemctl enable docker",
-		"sudo systemctl start docker",
+		{cmd: "sudo systemctl enable docker"},
+		{cmd: "sudo systemctl start docker"},
 	}
-	if err := runCommandsWithProgress(ctx, client, dockerCommands); err != nil {
+	if err := runSetupCommands(ctx, client, dockerCommands); err != nil {
 		return err
 	}
 
 	// Step 4: Create directory structure and Docker network
 	PrintInfo("[4/5] Configuring FrankenDeploy...")
-	structureCommands := []string{
+	structureCommands := []setupCommand{
 		// Create directory structure
-		fmt.Sprintf("sudo mkdir -p %s", constants.AppsDir),
-		fmt.Sprintf("sudo mkdir -p %s/apps", constants.CaddyDir),
-		fmt.Sprintf("sudo mkdir -p %s/logs", constants.CaddyDir),
-		fmt.Sprintf("sudo chown -R $USER:$USER %s", constants.BasePath),
-		// Create Docker network for apps
-		fmt.Sprintf("docker network create %s 2>/dev/null || true", constants.NetworkName),
+		{cmd: fmt.Sprintf("sudo mkdir -p %s", constants.AppsDir)},
+		{cmd: fmt.Sprintf("sudo mkdir -p %s/apps", constants.CaddyDir)},
+		{cmd: fmt.Sprintf("sudo mkdir -p %s/logs", constants.CaddyDir)},
+		{cmd: fmt.Sprintf("sudo chown -R $USER:$USER %s", constants.BasePath)},
+		// Create Docker network for apps (exists on re-run)
+		{cmd: fmt.Sprintf("docker network create %s", constants.NetworkName), allowFailure: true},
 	}
-	if err := runCommandsWithProgress(ctx, client, structureCommands); err != nil {
+	if err := runSetupCommands(ctx, client, structureCommands); err != nil {
 		return err
 	}
 
@@ -420,10 +431,15 @@ findtime = 600
 		return fmt.Errorf("failed to generate Caddy config: %w", err)
 	}
 
-	// Upload Caddyfile
-	uploadCaddyCmd := fmt.Sprintf(`cat > %s/Caddyfile << 'CADDYEOF'
+	// Upload Caddyfile (random heredoc delimiter: the user-provided email
+	// flows into this config)
+	delim, err := security.GenerateHeredocDelimiter("CADDYEOF")
+	if err != nil {
+		return fmt.Errorf("failed to generate delimiter: %w", err)
+	}
+	uploadCaddyCmd := fmt.Sprintf(`cat > %s/Caddyfile << '%s'
 %s
-CADDYEOF`, constants.CaddyDir, mainConfig)
+%s`, constants.CaddyDir, delim, mainConfig, delim)
 	if _, err := client.Exec(ctx, uploadCaddyCmd); err != nil {
 		return fmt.Errorf("failed to upload Caddyfile: %w", err)
 	}
@@ -444,7 +460,7 @@ CADDYEOF`, constants.CaddyDir, mainConfig)
 			sshPorts = append(sshPorts, port)
 		}
 	}
-	if err := runCommandsWithProgress(ctx, client, buildFirewallCommands(sshPorts)); err != nil {
+	if err := runSetupCommands(ctx, client, buildFirewallCommands(sshPorts)); err != nil {
 		return err
 	}
 
@@ -506,18 +522,103 @@ CADDYEOF`, constants.CaddyDir, mainConfig)
 	return nil
 }
 
-// runCommandsWithProgress executes a list of commands with error handling
-func runCommandsWithProgress(ctx context.Context, client *ssh.Client, commands []string) error {
+// setupCommand is a remote command with an explicit failure policy. The old
+// substring heuristics ("|| " or "2>/dev/null" meant never-failing) let a
+// failed Docker install pass silently.
+type setupCommand struct {
+	cmd          string
+	allowFailure bool
+}
+
+// runSetupCommands executes setup commands, failing fast unless a command
+// explicitly allows failure.
+func runSetupCommands(ctx context.Context, client *ssh.Client, commands []setupCommand) error {
 	for _, command := range commands {
-		PrintVerbose("  > %s", command)
-		result, err := client.Exec(ctx, command)
+		PrintVerbose("  > %s", command.cmd)
+		result, err := client.Exec(ctx, command.cmd)
 		if err != nil {
 			return fmt.Errorf("command failed: %w", err)
 		}
-		// Allow commands with || true or || to fail gracefully
-		if result.ExitCode != 0 && !strings.Contains(command, "|| true") && !strings.Contains(command, "|| ") && !strings.Contains(command, "2>/dev/null") {
-			return fmt.Errorf("command %q failed: %w", command, result.Err())
+		if result.ExitCode != 0 && !command.allowFailure {
+			return fmt.Errorf("command %q failed: %w", command.cmd, result.Err())
 		}
+	}
+	return nil
+}
+
+// checkOSSupported parses /etc/os-release content and returns an explicit
+// error on distributions without apt-get. The setup previously failed with
+// an opaque "command failed: sudo apt-get update" on Rocky/Alma/Fedora/Arch.
+func checkOSSupported(osRelease string) error {
+	fields := map[string]string{}
+	for _, line := range strings.Split(osRelease, "\n") {
+		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
+		if !found {
+			continue
+		}
+		fields[key] = strings.Trim(value, `"`)
+	}
+
+	supported := map[string]bool{"ubuntu": true, "debian": true}
+	if supported[fields["ID"]] {
+		return nil
+	}
+	for _, like := range strings.Fields(fields["ID_LIKE"]) {
+		if supported[like] {
+			return nil
+		}
+	}
+
+	detected := fields["PRETTY_NAME"]
+	if detected == "" {
+		detected = fields["ID"]
+	}
+	if detected == "" {
+		detected = "unknown"
+	}
+	return fmt.Errorf("unsupported Linux distribution: %s.\n"+
+		"frankendeploy server setup uses apt-get and currently supports Debian and Ubuntu (and derivatives).\n"+
+		"On other distributions, install Docker manually and re-run setup, or open an issue: https://github.com/yoanbernabeu/frankendeploy/issues", detected)
+}
+
+// validateSetupEmail validates the Let's Encrypt email before setup starts:
+// a typo would otherwise only surface at the first certificate issuance.
+func validateSetupEmail(email string) error {
+	if email == "" {
+		return fmt.Errorf("--email is required (used for Let's Encrypt certificates)")
+	}
+	addr, err := mail.ParseAddress(email)
+	if err != nil || addr.Address != email {
+		return fmt.Errorf("invalid --email %q: expected a plain address like you@example.com", email)
+	}
+	return nil
+}
+
+// preflightServerSetup verifies the remote environment before changing
+// anything: supported OS and usable sudo.
+func preflightServerSetup(ctx context.Context, client *ssh.Client) error {
+	// OS check
+	result, err := client.Exec(ctx, "cat /etc/os-release")
+	if err != nil || result.ExitCode != 0 {
+		return fmt.Errorf("cannot read /etc/os-release to identify the Linux distribution")
+	}
+	if err := checkOSSupported(result.Stdout); err != nil {
+		return err
+	}
+
+	// sudo check: every setup command relies on non-interactive sudo
+	result, err = client.Exec(ctx, "id -u")
+	if err != nil {
+		return fmt.Errorf("cannot check remote user: %w", err)
+	}
+	if strings.TrimSpace(result.Stdout) == "0" {
+		return nil // root does not need sudo rights
+	}
+	result, err = client.Exec(ctx, "sudo -n true")
+	if err != nil || result.ExitCode != 0 {
+		return fmt.Errorf("passwordless sudo is required for server setup.\n" +
+			"Grant it with: echo \"$USER ALL=(ALL) NOPASSWD:ALL\" | sudo tee /etc/sudoers.d/$USER\n" +
+			"(or run setup as root)")
 	}
 	return nil
 }
