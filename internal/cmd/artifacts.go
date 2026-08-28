@@ -23,6 +23,10 @@ func ensureDockerArtifacts(cfg *config.ProjectConfig) error {
 		{"docker-entrypoint.sh", func(g *generator.DockerfileGenerator) error { return g.WriteEntrypoint("") }},
 		{".dockerignore", func(g *generator.DockerfileGenerator) error { return g.WriteDockerignore("") }},
 	}
+	if cfg.FrankenPHP.Worker {
+		// Worker mode bakes the generated Caddyfile into the image
+		artifacts = append(artifacts, artifact{"Caddyfile", func(g *generator.DockerfileGenerator) error { return g.WriteCaddyfile("") }})
+	}
 
 	var missing []artifact
 	for _, a := range artifacts {

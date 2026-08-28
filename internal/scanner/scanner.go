@@ -66,6 +66,15 @@ func (s *Scanner) Scan() (*config.ScanResult, error) {
 	// api-platform/core (v2/v3) or api-platform/symfony (v4 split packages)
 	result.HasAPIPlatform = composer.HasAnyPackage("api-platform/core", "api-platform/symfony")
 
+	// FrankenPHP worker mode eligibility (runtime/frankenphp-symfony)
+	result.HasFrankenPHPRuntime = composer.HasPackage("runtime/frankenphp-symfony")
+	if result.HasFrankenPHPRuntime {
+		result.Warnings = append(result.Warnings,
+			"runtime/frankenphp-symfony detected: enabling FrankenPHP worker mode (frankenphp.worker: true in frankendeploy.yaml). "+
+				"Worker mode keeps the Symfony kernel in memory between requests — the app must be stateless. "+
+				"Set frankenphp.worker: false to opt out")
+	}
+
 	// Add required extensions based on detected features
 	result.PHPExtensions = s.enhanceExtensions(result.PHPExtensions, result)
 
@@ -179,6 +188,12 @@ func (s *Scanner) ToProjectConfig(result *config.ScanResult, name string) *confi
 	// would fail the deploy health check: default to the API entrypoint.
 	if result.HasAPIPlatform {
 		cfg.Deploy.HealthcheckPath = "/api"
+	}
+
+	// Enable FrankenPHP worker mode when the app ships the runtime package
+	// (announced via a scanner warning — never silent)
+	if result.HasFrankenPHPRuntime {
+		cfg.FrankenPHP.Worker = true
 	}
 
 	// For SQLite, add the database directory to shared_dirs for persistence

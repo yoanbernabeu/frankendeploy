@@ -34,6 +34,14 @@ php:
     - "upload_max_filesize=50M"
     - "post_max_size=50M"
 
+# FrankenPHP Runtime Options (optional)
+frankenphp:
+  # Worker mode: boots the Symfony kernel once and keeps it in memory
+  # between requests (significant latency improvement).
+  # Requires the runtime/frankenphp-symfony composer package.
+  # Auto-enabled by 'frankendeploy init' when the package is detected.
+  worker: true
+
 # Database Configuration (optional)
 database:
   # Driver: pgsql, mysql, or sqlite
@@ -166,6 +174,25 @@ Common extensions:
 - `gd` - Image processing
 - `imagick` - ImageMagick
 - `xdebug` - Debugging (dev only)
+
+### `frankenphp.worker`
+
+FrankenPHP worker mode boots the Symfony kernel **once** and keeps it in memory between requests, removing the per-request bootstrap cost.
+
+```yaml
+frankenphp:
+  worker: true
+```
+
+Requirements and constraints:
+
+- The `runtime/frankenphp-symfony` composer package must be installed (`composer require runtime/frankenphp-symfony`). `frankendeploy build` fails with a clear message if it is missing.
+- **The application must be stateless**: any static property or service state survives between requests. Symfony services are reset automatically, but hand-written static caches are not.
+- Memory leaks surface as automatic worker restarts (FrankenPHP restarts workers hitting their memory limit).
+- `frankendeploy init` enables it automatically (with a warning) when the package is detected. Opt out with `worker: false`.
+- Worker mode applies to **production only** — the dev environment keeps classic mode for easier debugging.
+
+When enabled, `frankendeploy build` generates a `Caddyfile` at the project root that is baked into the production image.
 
 ### `database.driver`
 

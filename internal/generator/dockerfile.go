@@ -34,6 +34,9 @@ type DockerfileData struct {
 	// HasPreload enables opcache.preload when the project ships a
 	// config/preload.php
 	HasPreload bool
+	// Worker enables FrankenPHP worker mode: the generated Caddyfile is
+	// copied into the prod stage (dev keeps the image default, classic mode)
+	Worker bool
 }
 
 // Generate generates the Dockerfile content
@@ -45,6 +48,7 @@ func (g *DockerfileGenerator) Generate() (string, error) {
 		FrankenPHPVersion: g.config.FrankenPHPVersion,
 		HealthcheckPath:   g.config.Deploy.HealthcheckPath,
 		HasPreload:        hasPreloadFile(),
+		Worker:            g.config.FrankenPHP.Worker,
 	}
 
 	if g.config.Assets.BuildTool != "" {
@@ -109,6 +113,35 @@ func (g *DockerfileGenerator) WriteDockerignore(path string) error {
 
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return fmt.Errorf("failed to write .dockerignore: %w", err)
+	}
+
+	return nil
+}
+
+// CaddyfileData holds data for the app Caddyfile template (worker mode).
+type CaddyfileData struct {
+	Name string
+}
+
+// GenerateCaddyfile generates the app-level Caddyfile enabling FrankenPHP
+// worker mode. Only relevant when config frankenphp.worker is true.
+func (g *DockerfileGenerator) GenerateCaddyfile() (string, error) {
+	return g.loader.Execute("caddyfile.tmpl", CaddyfileData{Name: g.config.Name})
+}
+
+// WriteCaddyfile writes the app Caddyfile to the specified path.
+func (g *DockerfileGenerator) WriteCaddyfile(path string) error {
+	if path == "" {
+		path = "Caddyfile"
+	}
+
+	content, err := g.GenerateCaddyfile()
+	if err != nil {
+		return fmt.Errorf("failed to generate Caddyfile: %w", err)
+	}
+
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		return fmt.Errorf("failed to write Caddyfile: %w", err)
 	}
 
 	return nil

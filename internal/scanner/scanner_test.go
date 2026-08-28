@@ -212,3 +212,67 @@ EMPTY_VALUE=
 		})
 	}
 }
+
+func TestScan_FrankenPHPRuntime_EnablesWorker(t *testing.T) {
+	tempDir := t.TempDir()
+	composer := `{
+		"require": {
+			"php": ">=8.3",
+			"symfony/framework-bundle": "^7.1",
+			"runtime/frankenphp-symfony": "^0.2"
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(tempDir, "composer.json"), []byte(composer), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(tempDir)
+	result, err := s.Scan()
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if !result.HasFrankenPHPRuntime {
+		t.Error("expected HasFrankenPHPRuntime to be true")
+	}
+
+	cfg := s.ToProjectConfig(result, "myapp")
+	if !cfg.FrankenPHP.Worker {
+		t.Error("expected FrankenPHP.Worker to be enabled when runtime/frankenphp-symfony is present")
+	}
+
+	foundWarning := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "worker") {
+			foundWarning = true
+		}
+	}
+	if !foundWarning {
+		t.Errorf("expected a warning announcing worker mode, got: %v", result.Warnings)
+	}
+}
+
+func TestScan_NoFrankenPHPRuntime_WorkerDisabled(t *testing.T) {
+	tempDir := t.TempDir()
+	composer := `{
+		"require": {
+			"php": ">=8.3",
+			"symfony/framework-bundle": "^7.1"
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(tempDir, "composer.json"), []byte(composer), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(tempDir)
+	result, err := s.Scan()
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if result.HasFrankenPHPRuntime {
+		t.Error("expected HasFrankenPHPRuntime to be false")
+	}
+	cfg := s.ToProjectConfig(result, "myapp")
+	if cfg.FrankenPHP.Worker {
+		t.Error("worker mode must stay opt-in without the runtime package")
+	}
+}
