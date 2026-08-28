@@ -336,11 +336,9 @@ func (s *Scanner) generateDefaultHooks(result *config.ScanResult) config.Hooks {
 			"php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration")
 	}
 
-	// Always add cache warmup for Symfony
-	if result.IsSymfony {
-		hooks.PostDeploy = append(hooks.PostDeploy,
-			"php bin/console cache:warmup")
-	}
+	// No default cache:warmup post_deploy hook: the cache is already warmed
+	// at image build time (Dockerfile runs cache:warmup), and a post-deploy
+	// warmup would run on the LIVE container after the swap.
 
 	return hooks
 }

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
+	"gopkg.in/yaml.v3"
 )
 
 // ─── Validation: DockerfileData ──────────────────────────────────────────────
@@ -1632,5 +1633,87 @@ func TestDockerfile_NoTailwindWithoutBundle(t *testing.T) {
 	}
 	if strings.Contains(out, "tailwind:build") {
 		t.Errorf("tailwind:build must not appear without the bundle:\n%s", out)
+	}
+}
+
+// --- Issue #61: generated artifacts must parse ---
+
+func fullFeaturedConfig() *config.ProjectConfig {
+	managed := true
+	cfg := &config.ProjectConfig{
+		Name: "myapp",
+		PHP: config.PHPConfig{
+			Version:    "8.3",
+			Extensions: []string{"intl", "opcache", "pdo_pgsql"},
+			IniValues:  []string{"memory_limit=256M"},
+		},
+		Assets: config.AssetsConfig{BuildTool: "assetmapper", OutputDir: "public/assets", Tailwind: true},
+	}
+	cfg.FrankenPHP.Worker = true
+	cfg.Database = config.DatabaseConfig{Driver: "pgsql", Version: "16", Managed: &managed}
+	cfg.Messenger = config.MessengerConfig{Enabled: true, Transports: []string{"async"}}
+	cfg.Mailer = config.MailerConfig{Enabled: true}
+	cfg.Deploy.Domain = "myapp.example.com"
+	cfg.Deploy.HealthcheckPath = "/health"
+	cfg.Deploy.MemoryLimit = "512m"
+	cfg.Deploy.CPULimit = "1.5"
+	cfg.Env.Prod = map[string]string{"TRUSTED_PROXIES": "127.0.0.1"}
+	cfg.Env.Dev = map[string]string{"APP_DEBUG": "1"}
+	return cfg
+}
+
+func TestGeneratedComposeFilesParseAsYAML(t *testing.T) {
+	gen := NewComposeGenerator(fullFeaturedConfig())
+
+	for name, generate := range map[string]func() (string, error){
+		"compose.yaml":      gen.GenerateDev,
+		"compose.prod.yaml": gen.GenerateProd,
+	} {
+		out, err := generate()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var parsed map[string]interface{}
+		if err := yaml.Unmarshal([]byte(out), &parsed); err != nil {
+			t.Errorf("%s is not valid YAML: %v\n%s", name, err, out)
+		}
+		if _, ok := parsed["services"]; !ok {
+			t.Errorf("%s: missing services key", name)
+		}
+	}
+}
+
+func TestGeneratedComposeFilesParseAsYAML_AllDrivers(t *testing.T) {
+	for _, driver := range []string{"pgsql", "mysql", "mariadb", "sqlite"} {
+		cfg := fullFeaturedConfig()
+		managed := driver != "sqlite"
+		cfg.Database = config.DatabaseConfig{Driver: driver, Version: "", Managed: &managed}
+		if driver == "sqlite" {
+			cfg.Database.Managed = nil
+			cfg.Database.Path = "var/data.db"
+		}
+		if driver != "" {
+			info, err := GetDBDriverInfo(driver)
+			if err == nil {
+				cfg.Database.Version = info.DefaultVersion
+			} else {
+				cfg.Database.Version = "3"
+			}
+		}
+
+		gen := NewComposeGenerator(cfg)
+		for name, generate := range map[string]func() (string, error){
+			"dev":  gen.GenerateDev,
+			"prod": gen.GenerateProd,
+		} {
+			out, err := generate()
+			if err != nil {
+				t.Fatalf("%s/%s: %v", driver, name, err)
+			}
+			var parsed map[string]interface{}
+			if err := yaml.Unmarshal([]byte(out), &parsed); err != nil {
+				t.Errorf("%s/%s is not valid YAML: %v", driver, name, err)
+			}
+		}
 	}
 }

@@ -19,13 +19,21 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     environment:
+      # Defaults below are only emitted when not overridden in env.dev:
+      # a duplicated mapping key is invalid YAML
+{{- if not (index .Env.Dev "SERVER_NAME") }}
       # SECURITY: Use non-privileged port {{ appPort }} for non-root execution
       # Never default to the production domain here: Caddy would attempt real
       # Let's Encrypt issuance from the local machine
       SERVER_NAME: "${SERVER_NAME:-localhost, :{{ appPort }}}"
+{{- end }}
+{{- if not (index .Env.Dev "APP_ENV") }}
       APP_ENV: dev
+{{- end }}
+{{- if not (index .Env.Dev "APP_DEBUG") }}
       APP_DEBUG: "1"
-{{- if .Database.Driver }}
+{{- end }}
+{{- if and .Database.Driver (not (index .Env.Dev "DATABASE_URL")) }}
       DATABASE_URL: "{{ yamlEscape .DatabaseURL }}"
 {{- end }}
 {{- if .Env.Dev }}

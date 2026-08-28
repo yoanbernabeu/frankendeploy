@@ -17,9 +17,17 @@ services:
     expose:
       - "{{ appPort }}"
     environment:
+      # Defaults below are only emitted when not overridden in env.prod:
+      # a duplicated mapping key is invalid YAML
+{{- if not (index .Env.Prod "SERVER_NAME") }}
       SERVER_NAME: ":{{ appPort }}"
+{{- end }}
+{{- if not (index .Env.Prod "APP_ENV") }}
       APP_ENV: prod
+{{- end }}
+{{- if not (index .Env.Prod "APP_DEBUG") }}
       APP_DEBUG: "0"
+{{- end }}
 {{- if .Database.Driver }}
       # DATABASE_URL: Set via .env.local on the server
 {{- end }}
