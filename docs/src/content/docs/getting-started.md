@@ -16,13 +16,15 @@ Behind that command: a Docker image built for your app, a server prepared with a
 ## Where to start
 
 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 not-prose my-6">
-  <a href="/frankendeploy/before-you-start/" class="block rounded-xl border border-white/10 bg-white/5 p-5 hover:bg-white/10 transition-colors">
-    <div class="text-lg font-semibold text-white mb-1">I have never deployed anything</div>
-    <div class="text-[#C3B2D3] text-sm">You have a Symfony app that works on your machine and you want it on the Internet. Start with <strong>Before You Start</strong>, then follow <strong>Your First Deployment</strong> step by step. About an hour, no prior server knowledge.</div>
+  <a href="/frankendeploy/before-you-start/" class="block rounded-xl border border-white/10 bg-white/5 p-5 hover:bg-white/10 hover:border-[#B3D133]/60 transition-colors no-underline">
+    <div class="text-lg font-semibold text-white mb-2">I have never deployed anything</div>
+    <div class="text-[#C3B2D3] text-sm leading-relaxed">You have a Symfony app that works on your machine and you want it on the Internet. Start with <strong class="text-white">Before You Start</strong>, then follow <strong class="text-white">Your First Deployment</strong> step by step. About an hour, no prior server knowledge.</div>
+    <div class="mt-4 text-sm font-medium text-[#B3D133]">Before You Start →</div>
   </a>
-  <a href="/frankendeploy/quickstart/" class="block rounded-xl border border-white/10 bg-white/5 p-5 hover:bg-white/10 transition-colors">
-    <div class="text-lg font-semibold text-white mb-1">I know Docker and SSH</div>
-    <div class="text-[#C3B2D3] text-sm">You want the commands, then the details. The <strong>Quick Start</strong> is ten lines; <a href="/frankendeploy/under-the-hood/" class="underline">Under the Hood</a> and the <a href="/frankendeploy/config/project/" class="underline">frankendeploy.yaml reference</a> tell you exactly what runs on the server.</div>
+  <a href="/frankendeploy/quickstart/" class="block rounded-xl border border-white/10 bg-white/5 p-5 hover:bg-white/10 hover:border-[#B3D133]/60 transition-colors no-underline">
+    <div class="text-lg font-semibold text-white mb-2">I know Docker and SSH</div>
+    <div class="text-[#C3B2D3] text-sm leading-relaxed">You want the commands, then the details. The <strong class="text-white">Quick Start</strong> is ten lines; <strong class="text-white">Under the Hood</strong> and the <strong class="text-white">frankendeploy.yaml reference</strong> tell you exactly what runs on the server.</div>
+    <div class="mt-4 text-sm font-medium text-[#B3D133]">Quick Start →</div>
   </a>
 </div>
 
