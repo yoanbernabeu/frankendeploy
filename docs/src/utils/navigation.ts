@@ -12,7 +12,7 @@ export interface NavSection {
 
 export const navigation: NavSection[] = [
   {
-    title: 'Getting Started',
+    title: 'Start',
     items: [
       { label: 'Introduction', href: '/frankendeploy/getting-started/', order: 1 },
       { label: 'Before You Start', href: '/frankendeploy/before-you-start/', order: 2 },
@@ -35,8 +35,14 @@ export const navigation: NavSection[] = [
       { label: 'Workers & Scheduled Tasks', href: '/frankendeploy/guides/workers/', order: 9 },
       { label: 'Data & Backups', href: '/frankendeploy/guides/data-backups/', order: 10 },
       { label: 'CI/CD', href: '/frankendeploy/guides/ci-cd/', order: 11 },
-      { label: 'Troubleshooting', href: '/frankendeploy/guides/troubleshooting/', order: 12 },
-      { label: 'FAQ', href: '/frankendeploy/guides/faq/', order: 13 },
+    ],
+  },
+  {
+    title: 'Understand',
+    items: [
+      { label: 'Under the Hood', href: '/frankendeploy/under-the-hood/', order: 1 },
+      { label: 'Security Model', href: '/frankendeploy/security/', order: 2 },
+      { label: 'Limits & Non-Goals', href: '/frankendeploy/limits/', order: 3 },
     ],
   },
   {
@@ -44,11 +50,8 @@ export const navigation: NavSection[] = [
     items: [
       { label: 'frankendeploy.yaml', href: '/frankendeploy/config/project/', order: 1 },
       { label: 'Global Config', href: '/frankendeploy/config/global/', order: 2 },
-      { label: 'Under the Hood', href: '/frankendeploy/under-the-hood/', order: 3 },
-      { label: 'Security Model', href: '/frankendeploy/security/', order: 4 },
-      { label: 'Limits & Non-Goals', href: '/frankendeploy/limits/', order: 5 },
-      { label: 'Upgrading', href: '/frankendeploy/upgrading/', order: 6 },
-      { label: 'Glossary', href: '/frankendeploy/glossary/', order: 7 },
+      { label: 'Upgrading', href: '/frankendeploy/upgrading/', order: 3 },
+      { label: 'Glossary', href: '/frankendeploy/glossary/', order: 4 },
     ],
   },
   {
@@ -110,6 +113,13 @@ export const navigation: NavSection[] = [
           { label: 'pull', href: '/frankendeploy/commands/frankendeploy_env_pull/' },
         ],
       },
+    ],
+  },
+  {
+    title: 'Help',
+    items: [
+      { label: 'Troubleshooting', href: '/frankendeploy/guides/troubleshooting/', order: 1 },
+      { label: 'FAQ', href: '/frankendeploy/guides/faq/', order: 2 },
     ],
   },
 ];
