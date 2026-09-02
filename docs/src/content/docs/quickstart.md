@@ -45,7 +45,7 @@ frankendeploy app status prod
 - [Limits & Non-Goals](/frankendeploy/limits/): what it is not designed for
 - [frankendeploy.yaml reference](/frankendeploy/config/project/): every field and its default
 - [Global config](/frankendeploy/config/global/): servers, SSH authentication, `remote_build`
-- [CI/CD](/frankendeploy/guides/deployment/#cicd-integration): `FRANKENDEPLOY_SSH_KEY`, `--yes`, `doctor` as a gate
+- [CI/CD](/frankendeploy/guides/ci-cd/): `FRANKENDEPLOY_SSH_KEY`, `--yes`, `doctor` as a gate
 - [Security Model](/frankendeploy/security/): what is done, what is deliberately not
 - [Troubleshooting](/frankendeploy/guides/troubleshooting/): every error message, cause and fix
 

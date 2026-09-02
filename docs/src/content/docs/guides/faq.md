@@ -69,7 +69,7 @@ System security updates, off-site backups of the database dumps, monitoring. The
 
 ## Can I use it in CI?
 
-Yes. `--yes` removes every prompt, `FRANKENDEPLOY_SSH_KEY` and `FRANKENDEPLOY_KNOWN_HOSTS` carry the credentials, and `doctor` exits 1 on a blocking problem. Recipes for GitHub Actions and GitLab CI are in the [deployment guide](/frankendeploy/guides/deployment/#cicd-integration).
+Yes. `--yes` removes every prompt, `FRANKENDEPLOY_SSH_KEY` and `FRANKENDEPLOY_KNOWN_HOSTS` carry the credentials, and `doctor` exits 1 on a blocking problem. Recipes for GitHub Actions and GitLab CI are in the [deployment guide](/frankendeploy/guides/ci-cd/).
 
 ## Something is wrong, where do I look?
 

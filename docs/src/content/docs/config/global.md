@@ -75,7 +75,7 @@ At connection time, FrankenDeploy tries in order:
 1. **ssh-agent**, when `SSH_AUTH_SOCK` is set
 2. **A key file**: `key_path`, or `~/.ssh/id_ed25519`, then `~/.ssh/id_rsa`, then the other keys in `~/.ssh/`
 
-Passphrase-protected keys are supported: the passphrase is prompted when needed and never stored. In non-interactive mode (`--yes`, CI), an encrypted key cannot be prompted: use ssh-agent or `FRANKENDEPLOY_SSH_KEY` (see [CI/CD](/frankendeploy/guides/deployment/#cicd-integration)).
+Passphrase-protected keys are supported: the passphrase is prompted when needed and never stored. In non-interactive mode (`--yes`, CI), an encrypted key cannot be prompted: use ssh-agent or `FRANKENDEPLOY_SSH_KEY` (see [CI/CD](/frankendeploy/guides/ci-cd/)).
 
 If the host key of a server changes (reinstalled VPS), the connection is refused with a clear message. When the change is expected: `ssh-keygen -R <host>`.
 
