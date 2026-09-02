@@ -12,7 +12,9 @@
 	frankenphp {
 		worker {
 			file ./public/index.php
+{{- if .LegacyRuntime }}
 			env APP_RUNTIME Runtime\FrankenPhpSymfony\Runtime
+{{- end }}
 		}
 
 		{$FRANKENPHP_CONFIG}

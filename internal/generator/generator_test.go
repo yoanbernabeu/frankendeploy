@@ -1,6 +1,8 @@
 package generator
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -1535,7 +1537,6 @@ func TestGenerateCaddyfile_WorkerBlock(t *testing.T) {
 	for _, want := range []string{
 		"worker {",
 		"file ./public/index.php",
-		`env APP_RUNTIME Runtime\FrankenPhpSymfony\Runtime`,
 		"{$SERVER_NAME:localhost}",
 		"php_server",
 		"{$FRANKENPHP_CONFIG}",
@@ -1544,6 +1545,34 @@ func TestGenerateCaddyfile_WorkerBlock(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("generated Caddyfile missing %q:\n%s", want, out)
 		}
+	}
+	// symfony/runtime >= 7.4 selects the worker runner itself: forcing the
+	// legacy Runtime class would point to a missing class
+	if strings.Contains(out, "APP_RUNTIME") {
+		t.Errorf("generated Caddyfile must not force APP_RUNTIME without runtime/frankenphp-symfony:\n%s", out)
+	}
+}
+
+func TestGenerateCaddyfile_LegacyRuntimeForcesAppRuntime(t *testing.T) {
+	dir := t.TempDir()
+	composer := `{"require": {"symfony/framework-bundle": "^7.1", "runtime/frankenphp-symfony": "^0.2"}}`
+	if err := os.WriteFile(filepath.Join(dir, "composer.json"), []byte(composer), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	cfg := &config.ProjectConfig{
+		Name: "myapp",
+		PHP:  config.PHPConfig{Version: "8.3"},
+	}
+	cfg.FrankenPHP.Worker = true
+
+	out, err := NewDockerfileGenerator(cfg).GenerateCaddyfile()
+	if err != nil {
+		t.Fatalf("GenerateCaddyfile: %v", err)
+	}
+	if !strings.Contains(out, `env APP_RUNTIME Runtime\FrankenPhpSymfony\Runtime`) {
+		t.Errorf("generated Caddyfile must force APP_RUNTIME for runtime/frankenphp-symfony:\n%s", out)
 	}
 }
 

@@ -29,6 +29,50 @@ type ComposerResult struct {
 	Packages          map[string]string
 }
 
+const (
+	// legacyFrankenPHPRuntimePackage is the historical way to run Symfony in
+	// FrankenPHP worker mode, superseded by symfony/runtime 7.4.
+	legacyFrankenPHPRuntimePackage = "runtime/frankenphp-symfony"
+	symfonyRuntimePackage          = "symfony/runtime"
+)
+
+// composerVersionRegex captures the first MAJOR.MINOR of a composer constraint
+var composerVersionRegex = regexp.MustCompile(`(\d+)\.(\d+)`)
+
+// HasLegacyFrankenPHPRuntime reports whether the app ships
+// runtime/frankenphp-symfony. That package needs the APP_RUNTIME override in
+// the generated Caddyfile; the native runtime does not.
+func (c *ComposerResult) HasLegacyFrankenPHPRuntime() bool {
+	return c.HasPackage(legacyFrankenPHPRuntimePackage)
+}
+
+// HasNativeFrankenPHPRuntime reports whether symfony/runtime is recent enough
+// (>= 7.4) to embed the FrankenPHP worker runner itself: since that version
+// SymfonyRuntime picks FrankenPhpWorkerRunner whenever the server sets
+// FRANKENPHP_WORKER, without any extra package or APP_RUNTIME override.
+func (c *ComposerResult) HasNativeFrankenPHPRuntime() bool {
+	return constraintAtLeast(c.GetPackageVersion(symfonyRuntimePackage), 7, 4)
+}
+
+// HasFrankenPHPWorkerRuntime reports whether the app can boot in FrankenPHP
+// worker mode at all, through either runtime.
+func (c *ComposerResult) HasFrankenPHPWorkerRuntime() bool {
+	return c.HasLegacyFrankenPHPRuntime() || c.HasNativeFrankenPHPRuntime()
+}
+
+// constraintAtLeast reads the first MAJOR.MINOR of a composer constraint
+// ("^7.4", "8.1.*", ">=7.4 <9") and compares it to the given minimum. A
+// constraint without an explicit version ("*", "dev-main") is not trusted.
+func constraintAtLeast(constraint string, major, minor int) bool {
+	m := composerVersionRegex.FindStringSubmatch(constraint)
+	if m == nil {
+		return false
+	}
+	maj, _ := strconv.Atoi(m[1])
+	mn, _ := strconv.Atoi(m[2])
+	return maj > major || (maj == major && mn >= minor)
+}
+
 // ParseComposer parses the composer.json file
 func (s *Scanner) ParseComposer() (*ComposerResult, error) {
 	composerPath := filepath.Join(s.projectPath, "composer.json")
