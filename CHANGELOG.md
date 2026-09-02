@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-09-02
+
+Symfony now sees the real world behind Caddy: the HTTPS scheme and the visitor's IP reach the application without any configuration. Found on a real deployment where API Platform advertised its documentation in `http://` on an `https://` site. The documentation also went through a full review against the code (#100), with a new preflight checks guide and a security model section.
+
 ### Added
 
-- **Symfony trusts Caddy out of the box**: the app container now receives `SYMFONY_TRUSTED_PROXIES` (read natively by Symfony >= 7.2) and `TRUSTED_PROXIES` set to the private subnets, so the real client IP and the HTTPS scheme reach the application: absolute URLs are generated in `https://`, session cookies get the `Secure` flag, and rate limiters see the visitor rather than the proxy. Safe because only Caddy can reach the app on its private per-app network. Nothing is injected when either variable is already defined in the server's `.env.local` - @yoanbernabeu
+- **Symfony trusts Caddy out of the box**: the app container now receives `SYMFONY_TRUSTED_PROXIES` (read natively by Symfony >= 7.2) and `TRUSTED_PROXIES` set to the private subnets, so the real client IP and the HTTPS scheme reach the application: absolute URLs are generated in `https://`, session cookies get the `Secure` flag, and rate limiters see the visitor rather than the proxy. Safe because only Caddy can reach the app on its private per-app network. Nothing is injected when either variable is already defined in the server's `.env.local` (#101) - @yoanbernabeu
 
 ## [0.15.1] - 2026-09-02
 
@@ -232,7 +236,8 @@ This release closes every P0 finding from the production-readiness audit. All fi
 
 Initial public release with core deployment features.
 
-[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.15.1...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.14.1...v0.15.0
 [0.14.1]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.14.0...v0.14.1
