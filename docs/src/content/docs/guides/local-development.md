@@ -5,128 +5,104 @@ description: Use FrankenDeploy for local Symfony development
 
 ## Development Environment
 
-FrankenDeploy provides a Docker-based development environment that mirrors your production setup.
-
-## Starting the Environment
+`frankendeploy build` generates a `compose.yaml` that runs your application on FrankenPHP with the services it needs. The image is the same multi-stage `Dockerfile` as production, built with its `frankenphp_dev` target.
 
 ```bash
+frankendeploy build      # once, generates compose.yaml
 frankendeploy dev up
 ```
 
 This starts:
-- Your Symfony application on **http://localhost:8000**
-- Database (PostgreSQL or MySQL if configured)
-- MailHog (if Symfony Mailer is detected) on **http://localhost:8025**
-- RabbitMQ (if Symfony Messenger is detected) on **http://localhost:15672**
+- Your Symfony application on **http://localhost:8000** (and https://localhost with a local certificate)
+- The database (PostgreSQL, MySQL or MariaDB) with `DATABASE_URL` already set
+- [Mailpit](https://mailpit.axllent.org/) when `mailer.enabled` (SMTP on `mailpit:1025`, web UI on **http://localhost:8025**)
+- RabbitMQ 4 when a Messenger transport uses `amqp://` (management UI on **http://localhost:15672**)
 
 ## Development Commands
 
-### Start with Build
-If you've made changes to the Dockerfile:
 ```bash
-frankendeploy dev up --build
+frankendeploy dev up --build      # rebuild the image first (Dockerfile or extensions changed)
+frankendeploy dev logs            # follow the logs (default)
+frankendeploy dev logs --tail 50  # last 50 lines
+frankendeploy dev down            # stop the environment
+frankendeploy dev restart         # restart it
 ```
 
-### View Logs
-```bash
-frankendeploy dev logs
-frankendeploy dev logs -f  # Follow mode
-```
-
-### Stop Environment
-```bash
-frankendeploy dev down
-```
-
-### Restart
-```bash
-frankendeploy dev restart
-```
+`dev up` runs in the background by default (`--detach`).
 
 ## Volume Mounts
 
-Your source code is mounted into the container, so changes are reflected immediately.
-
-The following directories are excluded from mounts (for performance):
-- `vendor/` - Installed fresh in container
-- `node_modules/` - Installed fresh in container
-- `var/` - Cache and logs
+Your project directory is mounted at `/app` in the container, so code changes are visible immediately. `vendor/` is a named Docker volume: dependencies are installed inside the container and never clash with a local `vendor/` from another PHP version. Everything else, including `var/` and `node_modules/`, is shared with your machine.
 
 ## Running Symfony Commands
 
-Use Docker Compose to run commands in the container:
+The application service is named `app`:
 
 ```bash
-# Symfony console
 docker compose exec app php bin/console cache:clear
-
-# Composer
 docker compose exec app composer require some/package
-
-# Run tests
 docker compose exec app php bin/phpunit
 ```
 
 ## Database Access
 
-### PostgreSQL
+The dev database uses `app` / `app` as user and password and `app` as database name. Its port is bound to `127.0.0.1` only, so nothing on your network can reach it.
+
 ```bash
-# Connect via psql
+# PostgreSQL
 docker compose exec database psql -U app -d app
+# from your machine: postgresql://app:app@127.0.0.1:5432/app
 
-# Connection details for your app
-DATABASE_URL=postgresql://app:app@database:5432/app
-```
-
-### MySQL
-```bash
-# Connect via mysql
+# MySQL / MariaDB
 docker compose exec database mysql -u app -papp app
-
-# Connection details
-DATABASE_URL=mysql://app:app@database:3306/app
+# from your machine: mysql://app:app@127.0.0.1:3306/app
 ```
+
+Inside the container, `DATABASE_URL` points to the `database` service. Override the host, port or name with `database.host`, `database.port`, `database.name` in `frankendeploy.yaml` if you need to.
 
 ## Debugging with Xdebug
 
-To enable Xdebug, add to your `frankendeploy.yaml`:
+PHP extensions listed in `frankendeploy.yaml` are installed in the image (dev and prod). The dev stage ships `XDEBUG_MODE=off`, so listing `xdebug` is harmless until you enable it:
 
 ```yaml
 php:
   extensions:
     - xdebug
-  ini_values:
-    - "xdebug.mode=debug"
-    - "xdebug.client_host=host.docker.internal"
+env:
+  dev:
+    XDEBUG_MODE: debug
+    XDEBUG_CONFIG: "client_host=host.docker.internal"
 ```
 
 Then rebuild:
+
 ```bash
 frankendeploy build
 frankendeploy dev up --build
 ```
 
+Keep in mind that the extension is also present in the production image, unloaded but installed. Remove it from `extensions` before a release if you prefer a lean image.
+
 ## Email Testing
 
-If Symfony Mailer is detected, MailHog is automatically included.
+With `mailer.enabled: true` (set by `init` when `config/packages/mailer.yaml` exists), Mailpit catches every email sent by the app. Point the mailer at it, either in `.env.local` or in the `env.dev` section of `frankendeploy.yaml`:
 
-- SMTP: `mailhog:1025`
-- Web UI: http://localhost:8025
-
-Add to your `.env.local`:
-```
-MAILER_DSN=smtp://mailhog:1025
+```yaml
+env:
+  dev:
+    MAILER_DSN: "smtp://mailpit:1025"
 ```
 
-## Hot Reload for Assets
+Open http://localhost:8025 to read the messages.
 
-If you're using Webpack Encore or Vite, run the dev server separately:
+## Assets
+
+With Webpack Encore or Vite, run the dev server on your machine, next to the container:
 
 ```bash
-# In another terminal
 npm run dev
 # or
 yarn dev
 ```
 
-For AssetMapper, changes are reflected automatically.
+With AssetMapper, changes are served directly by Symfony in dev mode.

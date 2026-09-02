@@ -6,33 +6,37 @@ description: Deploy your Symfony application to production
 ## Basic Deployment
 
 ```bash
-frankendeploy deploy production
+frankendeploy deploy prod
 ```
 
-This command performs a complete blue-green deployment:
-1. Generates missing Docker artifacts (`Dockerfile`, `docker-entrypoint.sh`, `.dockerignore`) — no need to run `build` first, and customized files are never overwritten
-2. Builds the Docker image (locally, or on the server with remote build)
-3. Transfers it to the server
-4. Sets up the managed database container if configured (`DATABASE_URL` is injected automatically)
-5. Starts the **new** container alongside the old one and runs pre-deploy hooks
-6. Runs health checks on the new container
-7. Swaps traffic to the new container (zero downtime), then stops the old one
-8. Updates Caddy configuration and cleans up old releases
+One command, a complete blue-green deployment:
 
-If any step fails before the swap, the old container keeps serving traffic untouched.
+1. Pre-flight check of the environment variables the app needs on the server (`APP_SECRET`, `DATABASE_URL` for an external database)
+2. Generates missing Docker artifacts (`Dockerfile`, `docker-entrypoint.sh`, `.dockerignore`, `Caddyfile` in worker mode). No need to run `build` first; customized files are never overwritten
+3. Builds the Docker image, locally or on the server with remote build, and transfers it
+4. Ensures the application's isolated Docker network exists
+5. Starts the managed database container if configured, and injects `DATABASE_URL`
+6. Starts the **new** container next to the old one, backs up the database, runs the `pre_deploy` hooks (migrations)
+7. Runs the health check on the new container
+8. Switches traffic to the new container (zero downtime), then stops the old one
+9. Restarts the Messenger worker on the new image, runs the `post_deploy` hooks
+10. Writes the Caddy configuration for the domain and reloads the proxy
+11. Cleans up old releases, images and backups beyond `keep_releases`
+
+If any step fails before the switch, the old container keeps serving traffic untouched. Before a first deploy, run [`frankendeploy doctor prod`](/frankendeploy/guides/doctor/).
 
 ## Deployment Options
 
 ### Custom Tag
 ```bash
-frankendeploy deploy production --tag v1.2.3
+frankendeploy deploy prod --tag v1.2.3
 ```
 
-By default, tags are timestamps like `20240115-143052`.
+By default, tags are timestamps like `20260902-143052`. The tag names the release and the Docker image.
 
 ### Cross-Architecture Detection
 
-FrankenDeploy automatically detects architecture mismatches between your local machine and the server. When deploying from Apple Silicon (ARM) to an x86_64 VPS, you'll see:
+FrankenDeploy compares the architecture of your machine and of the server. Deploying from Apple Silicon (arm64) to an x86_64 VPS, you see:
 
 ```
 ⚠️  Architecture mismatch detected:
@@ -42,76 +46,68 @@ FrankenDeploy automatically detects architecture mismatches between your local m
    Local builds will not run on this server.
 ```
 
-In **interactive mode**, FrankenDeploy prompts you to enable remote build and saves your preference for future deployments.
+In **interactive mode**, FrankenDeploy offers to enable remote build and saves the preference on the server entry (`remote_build: true` in the [global config](/frankendeploy/config/global/)).
 
-In **CI/CD mode** (`--yes`), you must explicitly use `--remote-build` or pre-configure the server:
+In **CI/CD mode** (`--yes`), either pass `--remote-build` or configure the server once:
 
 ```bash
-# Configure server for remote builds
-frankendeploy server set production remote_build true
-
-# Or use the flag
-frankendeploy deploy production --remote-build --yes
+frankendeploy server set prod remote_build true
 ```
 
-### Remote Build (Recommended for Apple Silicon)
-Build the Docker image directly on the server instead of locally:
+### Remote Build (recommended for Apple Silicon)
+Build the Docker image on the server instead of locally:
 ```bash
-frankendeploy deploy production --remote-build
+frankendeploy deploy prod --remote-build
 ```
-
-This is **recommended** when:
-- Your local machine has a different architecture (Apple Silicon → x86 VPS)
-- Local builds are slow due to emulation
-- You want faster transfers (source code vs Docker image)
 
 How it works:
-1. Transfers source code over the existing SSH connection (pure-Go SFTP — no rsync/scp required, works on Windows; excludes node_modules/vendor)
-2. Builds Docker image on the VPS
-3. Deploys normally
+1. The source code is transferred over the existing SSH connection (pure-Go SFTP: no rsync or scp needed, works on Windows; `.git`, `node_modules`, `vendor`, `var` and `.env.local` are excluded)
+2. The image is built on the VPS, with Docker's layer cache, so the second build is much faster than the first
+3. The deploy continues normally
+
+Recommended when your machine has a different architecture than the server, when local builds are slow, or when your upload bandwidth is small (source code is much smaller than an image).
 
 ### Force Local Build
-If remote build is configured but you want to build locally anyway:
+If remote build is configured on the server but you want a local build this time:
 ```bash
-frankendeploy deploy production --no-remote-build
+frankendeploy deploy prod --no-remote-build
 ```
 
 ### Skip Build
-If you've already built the image:
+If the image with this tag already exists locally:
 ```bash
-frankendeploy deploy production --no-build
+frankendeploy deploy prod --no-build --tag v1.2.3
 ```
 
 ### Skip Individual Checks
 ```bash
 # Skip the pre-flight environment variables check
-frankendeploy deploy production --skip-env-check
+frankendeploy deploy prod --skip-env-check
 
 # Skip the health check entirely (traffic switches unverified)
-frankendeploy deploy production --skip-healthcheck
+frankendeploy deploy prod --skip-healthcheck
 ```
 
 ### Force Deploy
-`--force` skips the env pre-flight and continues even when pre-deploy hooks (e.g. migrations) or the health check fail — use with care:
+`--force` skips the env pre-flight and continues even when the database backup, the `pre_deploy` hooks (migrations) or the health check fail. Use with care:
 ```bash
-frankendeploy deploy production --force
+frankendeploy deploy prod --force
 ```
 
 ## Health Checks
 
-FrankenDeploy verifies your application is healthy before switching traffic.
+FrankenDeploy verifies that the new container answers before switching traffic to it.
 
-Configure in `frankendeploy.yaml`:
 ```yaml
 deploy:
   healthcheck_path: /health
 ```
 
-The default path is `/`. For **API Platform** projects, `init` detects the framework and sets the path to `/api` automatically — a pure API returns 404 on `/`, which would fail every health check. The same path is also used **by the Docker `HEALTHCHECK` baked into the generated image**, so `docker ps` health status reflects the application actually answering, not just the web server process being up.
+The default path is `/`. For **API Platform** projects, `init` sets it to `/api` automatically: a pure API returns 404 on `/`, which would fail every health check. The same path is used by the Docker `HEALTHCHECK` baked into the image, so `docker ps` health status reflects the application actually answering, not just the web server process being up.
 
-The reverse proxy deliberately runs **no active health check** on the live container: with a single upstream there is nothing to fail over to, and a probe timing out under load would turn a slow application into a 503 for every visitor. The health check that protects production is the one run before the traffic switch. Per-request timeouts apply instead (5 s to connect, 60 s for the response headers): a container that accepts connections but never answers costs the affected visitor a 504, not an endless wait.
+The reverse proxy deliberately runs **no active health check** on the live container: with a single upstream there is nothing to fail over to, and a probe timing out under load would turn a slow application into a 503 for every visitor. Per-request timeouts apply instead (5 s to connect, 60 s for the response headers): a container that accepts connections but never answers costs the affected visitor a 504, not an endless wait.
 
-The check window is generous by default (90 seconds — a cold Symfony container needs time for opcache warmup and database wait) and tunable:
+The check window is generous by default (90 seconds: a cold Symfony container needs time for opcache warmup and database wait) and tunable:
 
 ```yaml
 deploy:
@@ -120,43 +116,41 @@ deploy:
   healthcheck_interval: 3    # seconds between attempts
 ```
 
-When the health check fails, FrankenDeploy prints the **last 50 log lines of the failing container** before removing it, so you immediately see the real cause (missing env variable, failed migration, PHP fatal…).
+When the health check fails, FrankenDeploy prints the **last 50 log lines of the failing container** before removing it, so you immediately see the real cause (missing variable, failed migration, PHP fatal…).
 
-Create a health endpoint in your Symfony app:
+A good health endpoint proves the app works, not only that PHP runs:
 
 ```php
 // src/Controller/HealthController.php
 #[Route('/health')]
-public function health(): Response
+public function health(Connection $connection): Response
 {
+    $connection->executeQuery('SELECT 1');
+
     return new Response('OK');
 }
 ```
 
-If the health check fails, the new container is removed and the old one keeps serving traffic — a failed deployment never takes your site down.
-
 ## Deployment Hooks
-
-Run commands before and after deployment:
 
 ```yaml
 deploy:
   hooks:
     pre_deploy:
-      - php bin/console doctrine:migrations:migrate --no-interaction
-      - php bin/console messenger:stop-workers
+      - php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration
     post_deploy:
-      - php bin/console cache:warmup
+      - php bin/console cache:pool:clear cache.app
 ```
 
-**Pre-deploy hooks** run in the new container before traffic is switched.
-**Post-deploy hooks** run after successful deployment.
+**`pre_deploy`** hooks run in the new container, before traffic is switched, while the old version still serves requests. A failure removes the new container and aborts the deploy (unless `--force`).
+
+**`post_deploy`** hooks run in the live container after the switch. A failure only warns.
+
+No `cache:warmup` hook is needed: the Symfony cache is warmed when the image is built.
 
 ## Database Migration Warning
 
-FrankenDeploy automatically detects when your project has Doctrine entities but no migration files. This can happen when you forget to generate migrations after creating entities.
-
-When this situation is detected (entities in `src/Entity/` but no files in `migrations/`), FrankenDeploy displays a warning:
+FrankenDeploy detects when the project has Doctrine entities but no migration files, a classic when you forget `make:migration` after creating entities:
 
 ```
 ⚠️  Warning: No database migrations found but entities exist!
@@ -175,23 +169,21 @@ When this situation is detected (entities in `src/Entity/` but no files in `migr
    Then redeploy your application.
 ```
 
-This warning only appears once per application. Once you add migrations and redeploy, the warning is automatically cleared.
-
-**Note:** This check only runs when you have a migration hook configured in your `pre_deploy` hooks.
+The warning appears once per application and clears itself once migrations exist. It only runs when a migration hook is configured in `pre_deploy`.
 
 ## Automatic Database Backup Before Migrations
 
-With a **managed database** (`database.managed: true`), FrankenDeploy dumps the database automatically before any `pre_deploy` hook containing `doctrine:migrations:migrate`:
+With a **managed database** (`database.managed: true`), FrankenDeploy dumps the database before any `pre_deploy` hook containing `doctrine:migrations:migrate`:
 
-- The dump is gzipped and stored on the server in `/opt/frankendeploy/apps/<app>/shared/backups/` (permissions `600`)
+- The gzipped dump is stored on the server in `/opt/frankendeploy/apps/<app>/shared/backups/` (permissions `600`)
 - Retention follows `deploy.keep_releases` (default: 5 backups)
-- A failed backup **aborts the deploy** — use `--force` to deploy without this safety net (not recommended)
+- A failed backup **aborts the deploy**. `--force` deploys without this safety net (not recommended)
 
-Why this matters: migrations run **before** the traffic switch, while the old code still serves requests. If the health check fails after a successful migration, the containers are rolled back but **the database schema is not** — the previous version then runs on the new schema. When that happens, FrankenDeploy tells you explicitly and points to the backup:
+Why this matters: migrations run **before** the traffic switch, while the old code still serves requests. If the health check fails after a successful migration, the containers are rolled back but **the database schema is not**: the previous version then runs on the new schema. When that happens, FrankenDeploy says so and points to the backup:
 
 ```
 ⚠️  The database was already migrated during this deploy. Rolling back the code may not be enough...
-⚠️  Database backup taken before the migration: /opt/frankendeploy/apps/demo/shared/backups/pgsql-20260721-120000.sql.gz
+⚠️  Database backup taken before the migration: /opt/frankendeploy/apps/my-app/shared/backups/pgsql-20260902-120000.sql.gz
 ```
 
 Restore example (PostgreSQL):
@@ -200,50 +192,57 @@ Restore example (PostgreSQL):
 gunzip -c backups/pgsql-<tag>.sql.gz | docker exec -i <app>-db psql -U <user> <db>
 ```
 
-**Best practice:** write backward-compatible migrations (expand/contract pattern — add columns before using them, drop them one release later). A code rollback then stays safe even after a migration.
+**Best practice:** write backward-compatible migrations (expand/contract: add columns before using them, drop them one release later). A code rollback then stays safe even after a migration.
 
-For an **external database** (not managed by FrankenDeploy), no automatic backup is possible — back it up yourself before deploying migrations.
+For an **external database**, no automatic backup is possible: back it up yourself before deploying migrations.
+
+## Messenger Workers
+
+With `messenger.enabled: true`, each deploy starts one `<app>-worker` container from the same image, running:
+
+```
+php bin/console messenger:consume <transports> --time-limit=3600 --memory-limit=256M
+```
+
+The worker is stopped and recreated after the traffic switch, so it always runs the same code as the app, and `rollback` does the same. `--time-limit` and `--memory-limit` make it restart cleanly (Docker's `restart: unless-stopped` brings it back), which is the recommended way to run long-lived PHP workers. A failure to start the worker warns but does not fail the deploy.
+
+```bash
+frankendeploy logs prod --service worker      # worker logs
+frankendeploy logs prod --service all -f      # app and worker
+```
 
 ## Release Management
-
-FrankenDeploy keeps multiple releases for instant rollback:
 
 ```yaml
 deploy:
   keep_releases: 5
 ```
 
-Releases are stored in `/opt/frankendeploy/apps/your-app/releases/`.
+Releases are stored in `/opt/frankendeploy/apps/<app>/releases/<tag>/`, with `current` pointing to the live one. `keep_releases` also drives **disk usage**: after each deploy, FrankenDeploy removes the Docker images whose tag left the retention window (never an image in use by a container), and the database backups beyond the same count. With remote builds, dangling intermediate layers are pruned after each build. Rollback targets and disk retention therefore always match.
 
-`keep_releases` also drives **disk usage**: after each deploy, FrankenDeploy removes the Docker images whose tag left the retention window (an image never in use by a container is the only kind removed), plus the pre-migration database backups beyond the same count. With remote builds, dangling intermediate layers are pruned after each build. Rollback targets and disk retention therefore always match.
-
-View releases:
 ```bash
-frankendeploy app status production
+frankendeploy app status prod
 ```
 
 ## Environment Variables
 
-Set production environment variables in `frankendeploy.yaml`:
+Production variables live **on the server**, per application, in `/opt/frankendeploy/apps/<app>/shared/.env.local`, and are managed with `frankendeploy env`:
 
-```yaml
-env:
-  prod:
-    APP_ENV: prod
-    APP_DEBUG: "0"
-    DATABASE_URL: "${DATABASE_URL}"
+```bash
+openssl rand -hex 32 | frankendeploy env set prod APP_SECRET --from-stdin
+frankendeploy env set prod MAILER_DSN="smtp://..." --reload
 ```
 
-For secrets, set them directly on the server or use a secrets manager.
+FrankenDeploy itself sets `SERVER_NAME`, `APP_ENV=prod`, `APP_DEBUG=0` and, with a managed database, `DATABASE_URL`. The `env.prod` section of `frankendeploy.yaml` only feeds the generated `compose.prod.yaml` and is **not** read by `deploy`. See [Environment Variables](/frankendeploy/guides/environment-variables/).
 
 ## Shared Files and Directories
 
-Files and directories that persist between releases:
+Paths that persist between releases, mounted into every container from `/opt/frankendeploy/apps/<app>/shared/`:
 
 ```yaml
 deploy:
   shared_files:
-    - .env.local
+    - .env.local          # mounted read-only
   shared_dirs:
     - var/log
     - var/sessions
@@ -252,65 +251,56 @@ deploy:
 
 ## Zero-Downtime Deployment
 
-FrankenDeploy ensures zero downtime:
+1. The new container starts next to the old one, under a temporary name
+2. Migrations run and the health check verifies the new container
+3. Traffic switches through a rename-based swap: the old container is renamed away while still running, the new one takes the app name, and Docker's embedded DNS follows the name, so Caddy never sees a missing upstream
+4. The old container is stopped
 
-1. New container starts alongside old one
-2. Health checks verify new container
-3. Traffic switches to the new container via a rename-based swap (Docker's embedded DNS follows the container name, so no request is dropped)
-4. Old container is stopped
-
-If anything fails — including the swap itself — traffic stays on the old container.
+If anything fails, including the swap itself, traffic stays on the old container.
 
 ## Network Isolation
 
-Each application runs on its own Docker network, `frankendeploy-<app-name>`, with its worker and its managed database. Caddy is attached to every app network so it can reach `<app-name>:8080` by name; nothing else is. Two applications deployed on the same VPS cannot reach each other's containers, so a compromised app cannot talk to another app's database.
+Each application runs on its own Docker network, `frankendeploy-<app>`, with its worker and its managed database. Caddy is attached to every app network so it can reach `<app>:8080` by name; nothing else is. Two applications deployed on the same VPS cannot reach each other's containers, so a compromised app cannot talk to another app's database.
 
-The network is created by the first deploy. An application deployed before per-app networks existed is migrated transparently on its next deploy: the database container joins the app network, the new app container starts on it, and once the old container is stopped the database leaves the shared network. Every step checks the current state before acting, so a deploy interrupted in the middle completes on the next run. `frankendeploy doctor` reports the isolation status of the app.
+The network is created by the first deploy. An application deployed before per-app networks existed (FrankenDeploy < 0.15) is migrated transparently on its next deploy: the database container joins the app network, the new app container starts on it, and once the old container is stopped the database leaves the shared network. Every step checks the current state before acting, so a deploy interrupted in the middle completes on the next run. `frankendeploy doctor` reports the isolation status of the app.
 
 ## Managed Database
 
-With `database.managed: true` (the default for PostgreSQL/MySQL), each deployment ensures the database container is running and injects the generated `DATABASE_URL` into your application automatically. Credentials are created once and persist across deployments — you never have to set `DATABASE_URL` yourself.
+With `database.managed: true` (the default for PostgreSQL, MySQL and MariaDB), the first deploy creates the `<app>-db` container with random credentials and a persistent volume, and every deploy makes sure it runs and injects `DATABASE_URL` into the app. Credentials are saved on the server (`shared/.db_credentials`, permissions `600`) and reused: you never set `DATABASE_URL` yourself, and the database survives deploys, rollbacks and reboots.
 
 ## Monitoring Deployments
 
-### View Logs During Deploy
-Use verbose mode:
 ```bash
-frankendeploy deploy production --verbose
-```
-
-### Check Deployment Status
-```bash
-frankendeploy app status production
-```
-
-### View Application Logs
-```bash
-frankendeploy logs production
-frankendeploy logs production -f  # Follow mode
+frankendeploy deploy prod --verbose       # every command run on the server
+frankendeploy app status prod             # container status, releases
+frankendeploy logs prod -f                # follow the app logs
+frankendeploy logs prod --since 10m       # last 10 minutes
+frankendeploy logs prod --tail 500        # last 500 lines
 ```
 
 ## CI/CD Integration
-
-FrankenDeploy provides environment variables and flags for seamless CI/CD integration.
 
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `FRANKENDEPLOY_SERVER` | Server name to use (alternative to argument) |
-| `FRANKENDEPLOY_SSH_KEY` | SSH private key content (base64 or raw) |
-| `FRANKENDEPLOY_KNOWN_HOSTS` | Known hosts file content |
+| `FRANKENDEPLOY_SERVER` | Server name to use (alternative to the argument) |
+| `FRANKENDEPLOY_SSH_KEY` | Content of the SSH private key (raw PEM, not base64). Encrypted keys cannot be used here: use an unencrypted deploy key |
+| `FRANKENDEPLOY_KNOWN_HOSTS` | Content of a `known_hosts` file with the server's host key |
 | `FRANKENDEPLOY_SKIP_HOST_KEY_CHECK` | Skip host key verification (not recommended) |
+
+The server itself must be declared on the runner: run `frankendeploy server add prod user@host --skip-test` in the job, as in the examples below.
 
 ### Non-Interactive Mode
 
-Use `--yes` or `-y` to skip all confirmation prompts:
+`--yes` (`-y`) answers every prompt with its default and never waits for input:
 
 ```bash
-frankendeploy deploy production --yes
-frankendeploy app remove production my-app --force --yes
+frankendeploy deploy prod --yes
+frankendeploy app remove prod my-app --force --yes
 ```
+
+`frankendeploy doctor prod` exits with code 1 on a blocking problem, which makes it a good gate before `deploy`.
 
 ### GitHub Actions Example
 
@@ -328,16 +318,20 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install FrankenDeploy
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/yoanbernabeu/frankendeploy/main/scripts/install.sh | sh
+        run: curl -fsSL https://raw.githubusercontent.com/yoanbernabeu/frankendeploy/main/scripts/install.sh | sh
 
       - name: Deploy
         env:
-          FRANKENDEPLOY_SERVER: production
+          FRANKENDEPLOY_SERVER: prod
           FRANKENDEPLOY_SSH_KEY: ${{ secrets.SSH_KEY }}
           FRANKENDEPLOY_KNOWN_HOSTS: ${{ secrets.KNOWN_HOSTS }}
-        run: frankendeploy deploy --yes
+        run: |
+          frankendeploy server add prod ${{ secrets.SSH_TARGET }} --skip-test
+          frankendeploy doctor prod
+          frankendeploy deploy --yes
 ```
+
+`SSH_TARGET` is `user@host`. The image is built on the runner (x86_64, like most VPS), so no remote build is needed.
 
 ### GitLab CI Example
 
@@ -345,11 +339,15 @@ jobs:
 deploy:
   stage: deploy
   image: ubuntu:22.04
-  script:
+  before_script:
+    - apt-get update && apt-get install -y curl ca-certificates
     - curl -fsSL https://raw.githubusercontent.com/yoanbernabeu/frankendeploy/main/scripts/install.sh | sh
+  script:
+    - frankendeploy server add prod $SSH_TARGET --skip-test
+    - frankendeploy doctor prod
     - frankendeploy deploy --yes
   variables:
-    FRANKENDEPLOY_SERVER: production
+    FRANKENDEPLOY_SERVER: prod
     FRANKENDEPLOY_SSH_KEY: $SSH_PRIVATE_KEY
     FRANKENDEPLOY_KNOWN_HOSTS: $KNOWN_HOSTS
   only:

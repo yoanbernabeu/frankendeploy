@@ -25,9 +25,10 @@ export const navigation: NavSection[] = [
       { label: 'Project Configuration', href: '/frankendeploy/guides/configuration/', order: 1 },
       { label: 'Local Development', href: '/frankendeploy/guides/local-development/', order: 2 },
       { label: 'Server Setup', href: '/frankendeploy/guides/server-setup/', order: 3 },
-      { label: 'Environment Variables', href: '/frankendeploy/guides/environment-variables/', order: 4 },
-      { label: 'Deployment', href: '/frankendeploy/guides/deployment/', order: 5 },
-      { label: 'Rollback', href: '/frankendeploy/guides/rollback/', order: 6 },
+      { label: 'Preflight Checks', href: '/frankendeploy/guides/doctor/', order: 4 },
+      { label: 'Environment Variables', href: '/frankendeploy/guides/environment-variables/', order: 5 },
+      { label: 'Deployment', href: '/frankendeploy/guides/deployment/', order: 6 },
+      { label: 'Rollback', href: '/frankendeploy/guides/rollback/', order: 7 },
     ],
   },
   {
@@ -43,15 +44,16 @@ export const navigation: NavSection[] = [
       { label: 'frankendeploy', href: '/frankendeploy/commands/frankendeploy/', order: 1 },
       { label: 'init', href: '/frankendeploy/commands/frankendeploy_init/', order: 2 },
       { label: 'build', href: '/frankendeploy/commands/frankendeploy_build/', order: 3 },
-      { label: 'deploy', href: '/frankendeploy/commands/frankendeploy_deploy/', order: 4 },
-      { label: 'rollback', href: '/frankendeploy/commands/frankendeploy_rollback/', order: 5 },
-      { label: 'logs', href: '/frankendeploy/commands/frankendeploy_logs/', order: 6 },
-      { label: 'shell', href: '/frankendeploy/commands/frankendeploy_shell/', order: 7 },
-      { label: 'exec', href: '/frankendeploy/commands/frankendeploy_exec/', order: 8 },
+      { label: 'doctor', href: '/frankendeploy/commands/frankendeploy_doctor/', order: 4 },
+      { label: 'deploy', href: '/frankendeploy/commands/frankendeploy_deploy/', order: 5 },
+      { label: 'rollback', href: '/frankendeploy/commands/frankendeploy_rollback/', order: 6 },
+      { label: 'logs', href: '/frankendeploy/commands/frankendeploy_logs/', order: 7 },
+      { label: 'shell', href: '/frankendeploy/commands/frankendeploy_shell/', order: 8 },
+      { label: 'exec', href: '/frankendeploy/commands/frankendeploy_exec/', order: 9 },
       {
         label: 'dev',
         href: '/frankendeploy/commands/frankendeploy_dev/',
-        order: 9,
+        order: 10,
         children: [
           { label: 'up', href: '/frankendeploy/commands/frankendeploy_dev_up/' },
           { label: 'down', href: '/frankendeploy/commands/frankendeploy_dev_down/' },
@@ -62,19 +64,20 @@ export const navigation: NavSection[] = [
       {
         label: 'server',
         href: '/frankendeploy/commands/frankendeploy_server/',
-        order: 10,
+        order: 11,
         children: [
           { label: 'add', href: '/frankendeploy/commands/frankendeploy_server_add/' },
           { label: 'setup', href: '/frankendeploy/commands/frankendeploy_server_setup/' },
           { label: 'list', href: '/frankendeploy/commands/frankendeploy_server_list/' },
           { label: 'status', href: '/frankendeploy/commands/frankendeploy_server_status/' },
           { label: 'remove', href: '/frankendeploy/commands/frankendeploy_server_remove/' },
+          { label: 'set', href: '/frankendeploy/commands/frankendeploy_server_set/' },
         ],
       },
       {
         label: 'app',
         href: '/frankendeploy/commands/frankendeploy_app/',
-        order: 11,
+        order: 12,
         children: [
           { label: 'list', href: '/frankendeploy/commands/frankendeploy_app_list/' },
           { label: 'status', href: '/frankendeploy/commands/frankendeploy_app_status/' },
@@ -84,7 +87,7 @@ export const navigation: NavSection[] = [
       {
         label: 'env',
         href: '/frankendeploy/commands/frankendeploy_env/',
-        order: 12,
+        order: 13,
         children: [
           { label: 'set', href: '/frankendeploy/commands/frankendeploy_env_set/' },
           { label: 'get', href: '/frankendeploy/commands/frankendeploy_env_get/' },

@@ -1,13 +1,15 @@
 ---
 title: Project Configuration
-description: Configure frankendeploy.yaml for your project
+description: How frankendeploy init builds your frankendeploy.yaml, and how to adjust it
 ---
 
-## Configuration File
+## The Configuration File
 
-FrankenDeploy uses `frankendeploy.yaml` in your project root. This file is created by `frankendeploy init` and can be customized.
+FrankenDeploy reads one file, `frankendeploy.yaml`, at the root of your project. `frankendeploy init` creates it from what it detects; you can then edit it by hand. It is versioned with your code and contains no secret.
 
-## Full Example
+The full list of fields is in the [frankendeploy.yaml reference](/frankendeploy/config/project/). This page explains where the values come from.
+
+## A Typical File
 
 ```yaml
 name: my-app
@@ -15,194 +17,77 @@ name: my-app
 php:
   version: "8.3"
   extensions:
-    - pdo_pgsql
     - intl
     - opcache
-    - redis
-  ini_values:
-    - "memory_limit=256M"
-    - "upload_max_filesize=50M"
+    - zip
+    - pdo_pgsql
 
 database:
   driver: pgsql
   version: "16"
+  managed: true
 
 assets:
-  build_tool: npm
-  build_command: "npm run build"
-  output_dir: "public/build"
+  build_tool: assetmapper
 
 deploy:
   domain: my-app.com
-  healthcheck_path: /health
+  healthcheck_path: /api
   keep_releases: 5
-  shared_files:
-    - .env.local
-  shared_dirs:
-    - var/log
-    - var/sessions
   hooks:
     pre_deploy:
-      - php bin/console doctrine:migrations:migrate --no-interaction
-    post_deploy:
-      - php bin/console cache:warmup
-
-env:
-  dev:
-    APP_DEBUG: "1"
-  prod:
-    APP_DEBUG: "0"
-```
-
-## Configuration Options
-
-### `name`
-
-Your application name. Used for Docker images, container names, and directory structure.
-
-```yaml
-name: my-symfony-app
-```
-
-Must be lowercase, alphanumeric with hyphens only.
-
-### `php`
-
-PHP configuration for your application.
-
-```yaml
-php:
-  version: "8.3"      # PHP version (8.2 minimum — required by FrankenPHP)
-  extensions:         # PHP extensions to install
-    - pdo_pgsql
-    - intl
-  ini_values:         # Custom php.ini settings
-    - "memory_limit=256M"
-```
-
-### `database`
-
-Database configuration for Docker Compose.
-
-```yaml
-database:
-  driver: pgsql       # pgsql, mysql, or sqlite
-  version: "16"       # Database version
-```
-
-#### SQLite Configuration
-
-SQLite is a file-based database and is handled differently from PostgreSQL and MySQL:
-
-```yaml
-database:
-  driver: sqlite
-  version: "3"
-  path: var/data.db   # Automatically detected from DATABASE_URL
-```
-
-Key differences for SQLite:
-- **No `managed` option**: SQLite cannot run as a container, so `managed: true` is not allowed
-- **Automatic shared_dirs**: The SQLite database directory is automatically added to `shared_dirs` for persistence
-- **Path detection**: The file path is extracted from your `DATABASE_URL` in `.env`
-
-Example `.env` for SQLite:
-```bash
-DATABASE_URL="sqlite:///%kernel.project_dir%/var/data.db"
-```
-
-### `assets`
-
-Frontend asset build configuration.
-
-```yaml
-assets:
-  build_tool: npm        # npm, yarn, pnpm, or assetmapper
-  build_command: "npm run build"
-  output_dir: "public/build"
-  node_version: "22"     # Node.js version for the build stage (default: 22)
-```
-
-For Symfony AssetMapper, set:
-```yaml
-assets:
-  build_tool: assetmapper
-```
-
-### `deploy`
-
-Deployment configuration.
-
-```yaml
-deploy:
-  domain: example.com           # Domain for HTTPS (Caddy config)
-  healthcheck_path: /health     # Health check endpoint
-  keep_releases: 5              # Number of releases to keep
-  shared_files:                 # Files shared between releases
-    - .env.local
-  shared_dirs:                  # Directories shared between releases
-    - var/log
-    - var/sessions
-  hooks:
-    pre_deploy:                 # Commands before switching traffic
-      - php bin/console doctrine:migrations:migrate --no-interaction
-    post_deploy:                # Commands after deployment
-      - php bin/console cache:warmup
-  memory_limit: 512m            # Optional: cap the app container memory
-  cpu_limit: "1.5"              # Optional: cap the app container CPUs
-```
-
-**Log rotation** is always on: every container FrankenDeploy starts (app, worker, database, Caddy) uses the `json-file` driver capped at 10 MB × 3 files, so container logs can never fill the server disk. Optional `memory_limit` / `cpu_limit` protect the VPS from a leaking or runaway app container — with 0 downtime deploys, the limits apply from the next deploy.
-
-### `env`
-
-Environment variables for different environments.
-
-```yaml
-env:
-  dev:
-    APP_DEBUG: "1"
-    MAILER_DSN: "smtp://mailhog:1025"
-  prod:
-    APP_DEBUG: "0"
-    TRUSTED_PROXIES: "127.0.0.1,REMOTE_ADDR"
+      - php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration
 ```
 
 ## Auto-detection
 
-When you run `frankendeploy init`, it automatically detects:
+`frankendeploy init` scans the project and announces every inference:
 
-| Feature | Detection Method |
-|---------|------------------|
-| PHP version | `composer.json` require.php constraint (floored at 8.2) |
-| PHP extensions | `composer.json` ext-* requirements |
-| Database | `doctrine.yaml`, `.env` DATABASE_URL |
-| Assets | `package.json`, `vite.config.js`, `importmap.php` |
-| API Platform | `composer.json` (`api-platform/*`) — sets `healthcheck_path: /api` |
+| Feature | Detected from | Result |
+|---------|---------------|--------|
+| PHP version | `composer.json` `require.php` | `php.version`, floored at 8.2 (FrankenPHP requirement) |
+| PHP extensions | `composer.json` `ext-*` and known packages, database driver, Messenger DSNs | `php.extensions` (always includes `intl`, `opcache`, `zip`) |
+| Database | `DATABASE_URL` in `.env` and `.env.local` (`.env.local` wins) | `database.driver`, `database.version`, `database.path` for SQLite |
+| Assets | `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `importmap.php`, Vite/Webpack config | `assets.build_tool`, `assets.tailwind` |
+| Messenger | `config/packages/messenger.yaml` | `messenger.enabled`, `messenger.transports` (plus `scheduler_default` with `symfony/scheduler`) |
+| Mailer | `config/packages/mailer.yaml` | `mailer.enabled` (Mailpit in dev) |
+| API Platform | `api-platform/*` in `composer.json` | `deploy.healthcheck_path: /api` |
+| Doctrine | `config/packages/doctrine.yaml` | migration hook in `deploy.hooks.pre_deploy` |
+| Worker mode | `symfony/runtime` >= 7.4 or `runtime/frankenphp-symfony` | `frankenphp.worker: true` |
 
-### Init Options
+When `.env` and `.env.local` disagree on the database driver, `init` warns and follows `.env.local`, as Symfony would at runtime.
 
-You can pass additional options to `frankendeploy init`:
+## Init Options
 
 ```bash
-# Set your production domain during initialization
+# Set the production domain right away
 frankendeploy init --domain my-app.com
 
-# Overwrite existing configuration
-frankendeploy init --force
-
-# Custom project name
+# Use a custom application name (default: the directory name)
 frankendeploy init --name my-custom-name
+
+# Overwrite an existing frankendeploy.yaml
+frankendeploy init --force
 ```
 
-If no domain is provided, you can add it later in `frankendeploy.yaml` under `deploy.domain`.
+Without `--domain`, add it later under `deploy.domain`: the app deploys fine without one, it just is not publicly reachable.
+
+## Adjusting the File
+
+The most common edits after `init`:
+
+- **Shared directories**: add `public/uploads` (or any directory that must survive a deploy) to `deploy.shared_dirs`. Setting the list replaces the default `var/log`, `var/sessions`.
+- **Resource limits**: `deploy.memory_limit: 512m` and `deploy.cpu_limit: "1.5"` cap the app container.
+- **Health check**: point `deploy.healthcheck_path` to a route that proves the app works (a database query, for instance), and widen the window with `healthcheck_timeout` if a cold start takes long.
+- **Extra system packages or PHP extensions**: `dockerfile.extra_packages` and `php.extensions`.
+- **Pin FrankenPHP**: `frankenphp_version: "1.4"` for reproducible builds.
+
+Production **environment variables and secrets are not in this file**: they live on the server, managed with [`frankendeploy env`](/frankendeploy/guides/environment-variables/).
 
 ## Validation
 
-FrankenDeploy validates your configuration. Run:
+The file is validated every time it is loaded, and unknown fields are rejected (a typo never fails silently). To validate without doing anything else:
 
 ```bash
 frankendeploy build
 ```
-
-If there are issues, you'll see validation errors with details on how to fix them.

@@ -26,12 +26,15 @@
 
 ## Features
 
-- **Zero config** — Auto-detects PHP version, extensions, database, and assets
+- **Zero config** — Auto-detects PHP version, extensions, database, assets, Messenger, worker mode
 - **One command deploy** — `frankendeploy deploy prod` and you're live
 - **Automatic HTTPS** — Let's Encrypt certificates via Caddy
-- **Zero downtime** — Rolling deployments with health checks
-- **Instant rollback** — `frankendeploy rollback prod` if something goes wrong
-- **Local dev included** — Same Docker setup for dev and prod
+- **Zero downtime** — Blue-green deployments with health checks; a failed deploy never takes the site down
+- **Managed database** — PostgreSQL, MySQL or MariaDB container, credentials injected, backup before every migration
+- **Instant rollback** — `frankendeploy rollback prod`, with the same health check as a deploy
+- **Server preparation** — Docker, firewall, Fail2ban, Caddy, and `frankendeploy doctor` to check everything before you deploy
+- **Isolated apps** — Several apps on one VPS, each on its own Docker network
+- **Local dev included** — Same Docker image for dev and prod
 
 ## Installation
 
@@ -56,17 +59,21 @@ go install github.com/yoanbernabeu/frankendeploy/cmd/frankendeploy@latest
 
 ```bash
 # In your Symfony project
-frankendeploy init                                    # Analyze & configure
+frankendeploy init --domain my-app.com                # Analyze & configure
 
-# Setup your server (one-time)
+# Prepare your server (one-time)
 frankendeploy server add prod user@my-vps.com
 frankendeploy server setup prod --email you@email.com
+frankendeploy doctor prod                             # Server, DNS, all good?
+
+# Production secrets (DATABASE_URL is handled for you with a managed database)
+openssl rand -hex 32 | frankendeploy env set prod APP_SECRET --from-stdin
 
 # Deploy
 frankendeploy deploy prod                             # That's it
 ```
 
-Your app is now live at `https://your-domain.com` with automatic HTTPS.
+Your app is now live at `https://my-app.com` with automatic HTTPS.
 
 ## Why FrankenDeploy?
 
@@ -86,20 +93,23 @@ Stop paying $20+/month for PaaS when a $5 VPS handles more traffic than you'll e
 
 | Command | Description |
 |---------|-------------|
-| `init` | Analyze project and generate config |
-| `build` | Generate Dockerfile and compose files |
-| `dev up/down/logs` | Local development environment |
-| `server add/setup/list` | Manage deployment servers |
-| `deploy` | Deploy to production |
-| `rollback` | Revert to previous release |
-| `logs` | View application logs |
-| `exec` / `shell` | Run commands in container |
-| `env set/get/list` | Manage environment variables |
+| `init` | Analyze the project and generate `frankendeploy.yaml` |
+| `build` | Generate the Dockerfile and compose files |
+| `dev up/down/logs/restart` | Local development environment |
+| `server add/setup/list/status/set/remove` | Manage deployment servers |
+| `doctor` | Check the local machine, the server and the DNS before a deploy |
+| `deploy` | Blue-green deployment |
+| `rollback` | Go back to a previous release |
+| `app list/status/remove` | Manage the applications deployed on a server |
+| `env set/get/list/remove/push/pull` | Manage production environment variables |
+| `logs` | Application and worker logs |
+| `exec` / `shell` | Run a command or open a shell in the container |
 
 ## Documentation
 
-- **[Getting Started](https://yoanbernabeu.github.io/frankendeploy/getting-started/)** — First deployment walkthrough
-- **[Configuration](https://yoanbernabeu.github.io/frankendeploy/guides/configuration/)** — All YAML options explained
+- **[Quick Start](https://yoanbernabeu.github.io/frankendeploy/quickstart/)** — First deployment walkthrough
+- **[frankendeploy.yaml reference](https://yoanbernabeu.github.io/frankendeploy/config/project/)** — Every option explained
+- **[Deployment guide](https://yoanbernabeu.github.io/frankendeploy/guides/deployment/)** — Health checks, hooks, backups, CI/CD
 - **[CLI Reference](https://yoanbernabeu.github.io/frankendeploy/commands/frankendeploy/)** — Every command documented
 
 ## Contributing

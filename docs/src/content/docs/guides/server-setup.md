@@ -6,15 +6,17 @@ description: Configure your VPS for FrankenDeploy deployments
 ## Requirements
 
 Your VPS should have:
-- Ubuntu 22.04+ or Debian 11+ (recommended)
-- SSH access with key-based authentication
-- At least 1GB RAM
-- Port 80 and 443 open (FrankenDeploy configures UFW automatically)
+- Ubuntu or Debian (`server setup` refuses any other distribution with an explicit message; Ubuntu 22.04+ and Debian 12+ are what it is tested on)
+- SSH access with key-based authentication, as root or as a user with passwordless `sudo`
+- At least 1 GB of RAM (2 GB if you build images on the server)
+- Ports 80 and 443 reachable from the Internet (FrankenDeploy opens them in UFW)
+
+Throughout this page the server is called `prod`.
 
 ## Adding a Server
 
 ```bash
-frankendeploy server add production deploy@your-server.com
+frankendeploy server add prod deploy@your-server.com
 ```
 
 After adding a server, FrankenDeploy **automatically tests the SSH connection**. If the connection fails, it will:
@@ -35,7 +37,7 @@ The working key is saved to your configuration.
 
 Standard VPS (auto-detect key):
 ```bash
-frankendeploy server add prod deploy@51.210.xx.xx
+frankendeploy server add prod deploy@203.0.113.42
 ```
 
 Custom SSH port:
@@ -85,18 +87,21 @@ In CI/CD, set `FRANKENDEPLOY_KNOWN_HOSTS` with the content of your known_hosts f
 ## Setting Up the Server
 
 ```bash
-frankendeploy server setup production --email admin@example.com
+frankendeploy server setup prod --email admin@example.com
 ```
 
 The `--email` flag is **required** for Let's Encrypt certificate registration.
 
 This command:
-1. Installs Docker if not present
-2. Configures UFW firewall (HTTP/HTTPS + SSH — both your configured SSH port and the port the SSH daemon actually uses are allowed before the firewall is enabled, so a custom port or gateway setup can never lock you out)
-3. Installs and configures Fail2ban (SSH brute-force protection)
-4. Creates the FrankenDeploy directory structure
-5. Sets up the `frankendeploy` Docker network (Caddy's home network)
-6. Deploys Caddy as a Docker container (reverse proxy)
+1. Checks the distribution and `sudo` before changing anything
+2. Installs Docker if not present
+3. Configures UFW firewall (HTTP/HTTPS + SSH — both your configured SSH port and the port the SSH daemon actually uses are allowed before the firewall is enabled, so a custom port or gateway setup can never lock you out)
+4. Installs and configures Fail2ban (SSH brute-force protection: 5 attempts, 1 hour ban)
+5. Creates the FrankenDeploy directory structure
+6. Sets up the `frankendeploy` Docker network (Caddy's home network)
+7. Starts Caddy as a Docker container (reverse proxy with automatic HTTPS)
+
+Running it again on an already prepared server is safe: every step checks the current state.
 
 ### What Gets Created
 
@@ -151,10 +156,18 @@ Docker's default address pools cover about 30 bridge networks per host, which is
 
 ## Verifying Setup
 
-Check the server status:
+Run the preflight checks, which also verify the DNS of your domain:
 
 ```bash
-frankendeploy server status production
+frankendeploy doctor prod
+```
+
+Every failed check names the command that fixes it. See [Preflight Checks](/frankendeploy/guides/doctor/).
+
+For resource usage, check the server status:
+
+```bash
+frankendeploy server status prod
 ```
 
 This shows:
@@ -252,18 +265,36 @@ When you deploy an app, FrankenDeploy:
 
 This ensures **zero downtime** for existing apps during deployments.
 
-## Security Features
+## Security Model
 
-FrankenDeploy automatically configures:
+What FrankenDeploy does on the server, and what it deliberately leaves to you.
 
-1. **UFW Firewall** - Only SSH (your actual SSH ports, not just 22), 80 and 443 open
-2. **Fail2ban** - SSH brute-force protection (automatic)
+### What `server setup` does
 
-### Additional Recommendations
+- **UFW firewall**: only SSH (your actual SSH ports, not just 22), 80 and 443 are open; everything else is denied
+- **Fail2ban** on SSH: 5 failed attempts, 1 hour ban
+- **Caddy** is the only container with published ports. Its admin API listens on `localhost` inside the container and is never exposed
 
-1. **Disable root login** - Use a deploy user
-2. **SSH keys only** - Disable password authentication
-3. **Automatic updates** - Enable unattended-upgrades
+### What every deploy does
+
+- The application runs as a **non-root user** on an unprivileged port (8080)
+- **No port is published** for the app, the worker or the database: the only way in is Caddy, on 80 and 443
+- **TLS** with automatic Let's Encrypt certificates, HSTS enabled
+- **One Docker network per application**: apps sharing a VPS cannot reach each other's containers
+- **Secrets** live in `.env.local` on the server, `chmod 600`, mounted read-only; `env set --from-stdin` keeps them out of your shell history
+- **Managed databases** get random credentials, a random one-time root password (MySQL/MariaDB), and a dump before every migration
+- **Log rotation** on every container, so logs cannot fill the disk
+
+### What it does not do
+
+FrankenDeploy prepares a server; it is not a hardening tool.
+
+- **No automatic security updates**: install `unattended-upgrades` or update the system yourself
+- **No `sshd` hardening**: password authentication and root login stay as your distribution ships them. Disable password authentication once your key works
+- **No encryption of secrets at rest**: `.env.local` is readable by root and by anyone with SSH access. Use your provider's disk encryption for backups and snapshots
+- **No intrusion detection, no container hardening beyond non-root**
+
+A `server harden` command covering updates, `sshd` and an audit in `doctor` is [being discussed](https://github.com/yoanbernabeu/frankendeploy/issues/95).
 
 ## Multiple Environments
 
@@ -271,13 +302,13 @@ You can add multiple servers for different environments:
 
 ```bash
 frankendeploy server add staging deploy@staging.example.com
-frankendeploy server add production deploy@prod.example.com
+frankendeploy server add prod deploy@203.0.113.42
 
 # Setup both
 frankendeploy server setup staging --email dev@example.com
-frankendeploy server setup production --email admin@example.com
+frankendeploy server setup prod --email admin@example.com
 
 # Deploy to each
 frankendeploy deploy staging
-frankendeploy deploy production
+frankendeploy deploy prod
 ```
