@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-02
+
+Applications sharing a VPS no longer share a Docker network: each one now gets its own, with Caddy attached to it, so a compromised app cannot reach another app's database. Validated live on a real installation deployed on the shared network (La Drache): migrated in one deploy, zero downtime, and from the shared network the database is not even resolvable any more.
+
 ### Changed
 
-- **One Docker network per application**: every container of an app (app, worker, managed database) now runs on `frankendeploy-<app>`, created by the first deploy, with Caddy attached to it. Applications sharing a VPS no longer see each other's containers: a compromised app cannot reach another app's database. Installations deployed on the shared `frankendeploy` network migrate transparently on their next deploy, rollback or `env --reload` (the database container joins the app network, and leaves the shared one once the old app container is gone; an interrupted migration resumes on the next run). `app remove` deletes the network, `doctor` reports the isolation status of the app, and running out of Docker address pools (about 30 apps per host) fails with the `daemon.json` fix instead of a cryptic error (#96) - @yoanbernabeu
+- **One Docker network per application**: every container of an app (app, worker, managed database) now runs on `frankendeploy-<app>`, created by the first deploy, with Caddy attached to it. Applications sharing a VPS no longer see each other's containers: a compromised app cannot reach another app's database. Installations deployed on the shared `frankendeploy` network migrate transparently on their next deploy, rollback or `env --reload` (the database container joins the app network, and leaves the shared one once the old app container is gone; an interrupted migration resumes on the next run). `app remove` deletes the network, `doctor` reports the isolation status of the app, and running out of Docker address pools (about 30 apps per host) fails with the `daemon.json` fix instead of a cryptic error (#96, #97) - @yoanbernabeu
 
 ## [0.14.1] - 2026-09-02
 
@@ -216,7 +220,10 @@ This release closes every P0 finding from the production-readiness audit. All fi
 
 Initial public release with core deployment features.
 
-[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.14.1...v0.15.0
+[0.14.1]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.14.0...v0.14.1
+[0.14.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.10.0...v0.11.0
