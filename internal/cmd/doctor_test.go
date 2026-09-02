@@ -160,3 +160,45 @@ func TestDoctorDNS(t *testing.T) {
 		t.Fatal("expected failure when the domain does not resolve")
 	}
 }
+
+func TestDoctorAppNetwork(t *testing.T) {
+	inspectCaddy := "docker inspect caddy"
+	inspectDB := "docker inspect myapp-db"
+
+	notCreated := scriptedMock(map[string]ssh.ExecResult{
+		"docker network inspect frankendeploy-myapp": {ExitCode: 1},
+	})
+	res := checkAppNetwork(context.Background(), notCreated, "myapp")
+	if !res.OK || !res.Warning {
+		t.Errorf("a network not created yet is a warning, not a failure: %+v", res)
+	}
+
+	caddyMissing := scriptedMock(map[string]ssh.ExecResult{
+		"docker network inspect frankendeploy-myapp": {Stdout: "frankendeploy-myapp\n"},
+		inspectCaddy: {Stdout: "frankendeploy \n"},
+	})
+	res = checkAppNetwork(context.Background(), caddyMissing, "myapp")
+	if res.OK || !strings.Contains(res.Advice, "docker network connect frankendeploy-myapp caddy") {
+		t.Errorf("Caddy off the app network must fail with the connect command, got %+v", res)
+	}
+
+	leftover := scriptedMock(map[string]ssh.ExecResult{
+		"docker network inspect frankendeploy-myapp": {Stdout: "frankendeploy-myapp\n"},
+		inspectCaddy: {Stdout: "frankendeploy frankendeploy-myapp \n"},
+		inspectDB:    {Stdout: "frankendeploy frankendeploy-myapp \n"},
+	})
+	res = checkAppNetwork(context.Background(), leftover, "myapp")
+	if res.OK || !res.Warning || !strings.Contains(res.Detail, "myapp-db") {
+		t.Errorf("a container still on the shared network must be reported, got %+v", res)
+	}
+
+	isolated := scriptedMock(map[string]ssh.ExecResult{
+		"docker network inspect frankendeploy-myapp": {Stdout: "frankendeploy-myapp\n"},
+		inspectCaddy: {Stdout: "frankendeploy frankendeploy-myapp \n"},
+		inspectDB:    {Stdout: "frankendeploy-myapp \n"},
+	})
+	res = checkAppNetwork(context.Background(), isolated, "myapp")
+	if !res.OK || res.Warning {
+		t.Errorf("expected OK when isolated, got %+v", res)
+	}
+}

@@ -261,6 +261,12 @@ FrankenDeploy ensures zero downtime:
 
 If anything fails — including the swap itself — traffic stays on the old container.
 
+## Network Isolation
+
+Each application runs on its own Docker network, `frankendeploy-<app-name>`, with its worker and its managed database. Caddy is attached to every app network so it can reach `<app-name>:8080` by name; nothing else is. Two applications deployed on the same VPS cannot reach each other's containers, so a compromised app cannot talk to another app's database.
+
+The network is created by the first deploy. An application deployed before per-app networks existed is migrated transparently on its next deploy: the database container joins the app network, the new app container starts on it, and once the old container is stopped the database leaves the shared network. Every step checks the current state before acting, so a deploy interrupted in the middle completes on the next run. `frankendeploy doctor` reports the isolation status of the app.
+
 ## Managed Database
 
 With `database.managed: true` (the default for PostgreSQL/MySQL), each deployment ensures the database container is running and injects the generated `DATABASE_URL` into your application automatically. Credentials are created once and persist across deployments — you never have to set `DATABASE_URL` yourself.

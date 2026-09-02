@@ -20,7 +20,10 @@ const (
 	ContainerUID  = "1000"
 	ContainerGID  = "1000"
 	AppPort       = "8080"
-	NetworkName   = "frankendeploy"
+	// NetworkName is the shared network created by server setup. Caddy lives
+	// on it; applications do not (see AppNetworkName). It is kept for
+	// installations deployed before per-app networks existed.
+	NetworkName = "frankendeploy"
 )
 
 // Health check defaults
@@ -48,6 +51,14 @@ const (
 	// DockerLogOptions is the ready-to-use docker run fragment.
 	DockerLogOptions = "--log-driver json-file --log-opt max-size=" + LogMaxSize + " --log-opt max-file=" + LogMaxFile
 )
+
+// AppNetworkName returns the Docker network dedicated to an application.
+// Every container of the app (app, worker, database) runs on it, and Caddy
+// is attached to it at deploy time: applications sharing a VPS never see
+// each other's containers.
+func AppNetworkName(name string) string {
+	return NetworkName + "-" + name
+}
 
 // AppBasePath returns the base path for an application on the server.
 func AppBasePath(name string) string {

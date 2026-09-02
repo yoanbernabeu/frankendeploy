@@ -158,7 +158,7 @@ func TestStartNewContainer_BuildsDockerRunCommand(t *testing.T) {
 	// Should issue a docker run with the expected flags
 	wantFragments := []string{
 		"docker run -d --name myapp-new",
-		"--network frankendeploy",
+		"--network frankendeploy-myapp",
 		"--restart unless-stopped",
 		"--user 1000:1000",
 		"-e SERVER_NAME=:8080",

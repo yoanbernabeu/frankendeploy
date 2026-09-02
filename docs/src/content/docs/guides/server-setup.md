@@ -95,7 +95,7 @@ This command:
 2. Configures UFW firewall (HTTP/HTTPS + SSH — both your configured SSH port and the port the SSH daemon actually uses are allowed before the firewall is enabled, so a custom port or gateway setup can never lock you out)
 3. Installs and configures Fail2ban (SSH brute-force protection)
 4. Creates the FrankenDeploy directory structure
-5. Sets up the `frankendeploy` Docker network
+5. Sets up the `frankendeploy` Docker network (Caddy's home network)
 6. Deploys Caddy as a Docker container (reverse proxy)
 
 ### What Gets Created
@@ -115,35 +115,38 @@ This command:
 |-----------|---------|
 | `caddy` | Reverse proxy with automatic HTTPS |
 | `<app-name>` | Your deployed applications |
+| `<app-name>-worker` | Messenger worker (when enabled) |
+| `<app-name>-db` | Managed database (when enabled) |
 
-All containers are connected via the `frankendeploy` Docker network.
+### Docker Networks
+
+Each application gets its own network, `frankendeploy-<app-name>`, created by its first deploy. The app, its worker and its database run on it, and Caddy is attached to it so it can still reach `<app-name>:8080` by name. Applications sharing a VPS never see each other's containers: a compromised app cannot reach another app's database.
+
+The `frankendeploy` network created by `server setup` is Caddy's home network. Applications deployed before per-app networks existed are migrated on their next deploy (the database container is moved, never recreated), and `frankendeploy doctor` reports any container still left on the shared network.
+
+Docker's default address pools cover about 30 bridge networks per host, which is far beyond what a single VPS is meant to host. Past that, `deploy` fails with a clear message pointing to the `default-address-pools` setting of `/etc/docker/daemon.json`.
 
 ## Architecture
 
 ```
-                    ┌──────────────────────────────────────┐
-                    │               VPS                    │
-                    │                                      │
-  Internet          │   ┌────────────────────────────┐    │
-    │               │   │     Caddy (Docker)         │    │
-    │               │   │  ┌──────────────────────┐  │    │
-    ├── :443 ──────►│   │  │ Auto HTTPS (Let's    │  │    │
-    └── :80  ──────►│   │  │ Encrypt)             │  │    │
-                    │   │  └──────────────────────┘  │    │
-                    │   │              │             │    │
-                    │   │   import apps/*.caddy     │    │
-                    │   └──────────────┬─────────────┘    │
-                    │                  │                   │
-                    │     Docker Network: frankendeploy    │
-                    │                  │                   │
-                    │     ┌────────────┴────────────┐      │
-                    │     │                         │      │
-                    │  ┌──▼───┐    ┌──────┐    ┌───▼──┐   │
-                    │  │ App1 │    │ App2 │    │ App3 │   │
-                    │  │ :80  │    │ :80  │    │ :80  │   │
-                    │  └──────┘    └──────┘    └──────┘   │
-                    │                                      │
-                    └──────────────────────────────────────┘
+                    ┌────────────────────────────────────────────────────────────────────┐
+                    │                                VPS                                 │
+                    │                                                                    │
+  Internet          │   ┌────────────────────────────────────────────────────────────┐   │
+    │               │   │                       Caddy (Docker)                       │   │
+    ├── :443 ──────►│   │                 Auto HTTPS (Let's Encrypt)                 │   │
+    └── :80  ──────►│   │                    import apps/*.caddy                     │   │
+                    │   └─────────┬────────────────────┬────────────────────┬────────┘   │
+                    │             │                    │                    │            │
+                    │   ┌─────────▼────────┐ ┌─────────▼────────┐ ┌─────────▼────────┐   │
+                    │   │frankendeploy-app1│ │frankendeploy-app2│ │frankendeploy-app3│   │
+                    │   │ ┌──────┐ ┌────┐  │ │ ┌──────┐ ┌────┐  │ │ ┌──────┐         │   │
+                    │   │ │ app1 │ │ db │  │ │ │ app2 │ │ db │  │ │ │ app3 │         │   │
+                    │   │ │:8080 │ └────┘  │ │ │:8080 │ └────┘  │ │ │:8080 │         │   │
+                    │   │ └──────┘         │ │ └──────┘         │ │ └──────┘         │   │
+                    │   └──────────────────┘ └──────────────────┘ └──────────────────┘   │
+                    │    one isolated network per application, Caddy attached to each    │
+                    └────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Verifying Setup
@@ -200,6 +203,8 @@ mkdir -p /opt/frankendeploy/{apps,caddy/apps,caddy/logs}
 ```bash
 docker network create frankendeploy
 ```
+
+This is Caddy's home network only: each application gets its own `frankendeploy-<app-name>` network, created automatically by its first deploy.
 
 ### Create Caddyfile
 ```bash

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **One Docker network per application**: every container of an app (app, worker, managed database) now runs on `frankendeploy-<app>`, created by the first deploy, with Caddy attached to it. Applications sharing a VPS no longer see each other's containers: a compromised app cannot reach another app's database. Installations deployed on the shared `frankendeploy` network migrate transparently on their next deploy, rollback or `env --reload` (the database container joins the app network, and leaves the shared one once the old app container is gone; an interrupted migration resumes on the next run). `app remove` deletes the network, `doctor` reports the isolation status of the app, and running out of Docker address pools (about 30 apps per host) fails with the `daemon.json` fix instead of a cryptic error (#96) - @yoanbernabeu
+
 ## [0.14.1] - 2026-09-02
 
 The generated reverse proxy no longer runs an active health check that could turn a slow application into a 503 for everyone; per-request timeouts take its place. Found with a 500-user load test on a 2 vCPU VPS: 56% of requests answered 503 by Caddy while the application itself had no error.

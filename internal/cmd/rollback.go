@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/frankendeploy/internal/constants"
+	"github.com/yoanbernabeu/frankendeploy/internal/deploy"
 	"github.com/yoanbernabeu/frankendeploy/internal/security"
 )
 
@@ -143,6 +144,10 @@ func runRollback(cmd *cobra.Command, args []string) error {
 	databaseURL := readSavedDatabaseURL(ctx, client, appPath)
 	tempName := appName + "-rollback"
 
+	if err := deploy.EnsureAppNetwork(ctx, client, appName, cmdLogger{}); err != nil {
+		return fmt.Errorf("network setup failed: %w", err)
+	}
+
 	if err := startNewContainer(ctx, client, cfg, imageName, appPath, targetRelease, databaseURL, tempName); err != nil {
 		return err
 	}
@@ -174,6 +179,8 @@ func runRollback(cmd *cobra.Command, args []string) error {
 			PrintWarning("Failed to roll back Messenger worker: %v", err)
 		}
 	}
+
+	deploy.DetachFromSharedNetwork(ctx, client, appName, cmdLogger{})
 
 	PrintSuccess("Rolled back to release %s", targetRelease)
 

@@ -137,7 +137,7 @@ func DeployManagedDatabase(ctx context.Context, client ssh.Executor, cfg *config
 		-v %s:%s \
 		%s`,
 		dbContainerName,
-		constants.NetworkName,
+		constants.AppNetworkName(cfg.Name),
 		constants.DockerLogOptions,
 		dockerEnv,
 		dbVolumeName,

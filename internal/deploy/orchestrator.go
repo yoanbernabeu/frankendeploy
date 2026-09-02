@@ -43,6 +43,9 @@ type Steps struct {
 	SwapContainers func(oldExists bool) error
 	// DeployWorkers starts the Messenger worker container.
 	DeployWorkers func() error
+	// IsolateNetwork detaches the app containers from the shared network once
+	// the old container is gone (optional, best-effort).
+	IsolateNetwork func()
 	// RunPostDeployHooks runs post_deploy hooks on the live container.
 	RunPostDeployHooks func() error
 	// CaddyAppConfigExists reports whether the app already has a Caddy config.
@@ -190,6 +193,12 @@ func RunPipeline(state *DeployState, steps Steps, opts Options) error {
 		} else {
 			log.Success("Messenger worker started")
 		}
+	}
+
+	// Step 8c: the old container was the last one needing the shared
+	// network: finish the migration to the per-app network
+	if steps.IsolateNetwork != nil {
+		steps.IsolateNetwork()
 	}
 
 	// Step 9: Post-deploy hooks (the new version is live: failures only warn)
