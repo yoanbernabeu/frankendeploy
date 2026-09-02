@@ -65,7 +65,7 @@ Yes. Every step checks the current state; a second run changes nothing on a prep
 
 ## What does FrankenDeploy not do for me?
 
-System security updates, off-site backups of the database dumps, monitoring. The [Security Model](/frankendeploy/guides/server-setup/#security-model) lists it precisely.
+System security updates, off-site backups of the database dumps, monitoring. The [Security Model](/frankendeploy/security/) lists it precisely.
 
 ## Can I use it in CI?
 

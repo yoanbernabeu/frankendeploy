@@ -22,7 +22,7 @@ Behind that command: a Docker image built for your app, a server prepared with a
   </a>
   <a href="/frankendeploy/quickstart/" class="block rounded-xl border border-white/10 bg-white/5 p-5 hover:bg-white/10 transition-colors">
     <div class="text-lg font-semibold text-white mb-1">I know Docker and SSH</div>
-    <div class="text-[#C3B2D3] text-sm">You want the commands, then the details. The <strong>Quick Start</strong> is ten lines; <strong>Under the Hood</strong> and the <strong>frankendeploy.yaml reference</strong> tell you exactly what runs on the server.</div>
+    <div class="text-[#C3B2D3] text-sm">You want the commands, then the details. The <strong>Quick Start</strong> is ten lines; <a href="/frankendeploy/under-the-hood/" class="underline">Under the Hood</a> and the <a href="/frankendeploy/config/project/" class="underline">frankendeploy.yaml reference</a> tell you exactly what runs on the server.</div>
   </a>
 </div>
 
@@ -37,9 +37,9 @@ Behind that command: a Docker image built for your app, a server prepared with a
 
 ## What it is not
 
-- **Not a PaaS**: there is no dashboard, no account, no monthly fee. The server is yours, and so is its maintenance (system updates, backups off the machine). The [Security Model](/frankendeploy/guides/server-setup/#security-model) says exactly what FrankenDeploy handles and what it leaves to you.
+- **Not a PaaS**: there is no dashboard, no account, no monthly fee. The server is yours, and so is its maintenance (system updates, backups off the machine). The [Security Model](/frankendeploy/security/) says exactly what FrankenDeploy handles and what it leaves to you.
 - **Not a cluster**: one VPS, one copy of your app. Enough for most projects; not built for horizontal scaling.
-- **Not magic**: it runs standard Docker, Caddy and shell commands on an ordinary Linux server. Everything it does can be read in [the deployment guide](/frankendeploy/guides/deployment/) and in the [source code](https://github.com/yoanbernabeu/frankendeploy).
+- **Not magic**: it runs standard Docker, Caddy and shell commands on an ordinary Linux server. Everything it does can be read in [Under the Hood](/frankendeploy/under-the-hood/) and in the [source code](https://github.com/yoanbernabeu/frankendeploy).
 
 ## Built on FrankenPHP
 

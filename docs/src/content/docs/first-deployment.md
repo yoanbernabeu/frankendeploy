@@ -246,4 +246,4 @@ The previous release is still on the server (five are kept by default), it gets 
 - [Environment Variables](/frankendeploy/guides/environment-variables/): `MAILER_DSN`, API keys, and applying a change without downtime
 - [Deployment](/frankendeploy/guides/deployment/): health checks, hooks, backups, what happens when something fails
 - [Troubleshooting](/frankendeploy/guides/troubleshooting/): every error message, its cause and its fix
-- [Security Model](/frankendeploy/guides/server-setup/#security-model): what is handled for you, and what stays your job (system updates, off-site backups)
+- [Security Model](/frankendeploy/security/): what is handled for you, and what stays your job (system updates, off-site backups)

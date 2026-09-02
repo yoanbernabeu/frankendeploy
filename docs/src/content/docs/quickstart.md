@@ -41,11 +41,12 @@ frankendeploy app status prod
 
 ## Where the details are
 
-- [Deployment](/frankendeploy/guides/deployment/): the deploy sequence, health checks, hooks, network isolation
+- [Under the Hood](/frankendeploy/under-the-hood/): the server layout, the exact `docker run`, the generated Caddyfile, the deploy sequence step by step
+- [Limits & Non-Goals](/frankendeploy/limits/): what it is not designed for
 - [frankendeploy.yaml reference](/frankendeploy/config/project/): every field and its default
 - [Global config](/frankendeploy/config/global/): servers, SSH authentication, `remote_build`
 - [CI/CD](/frankendeploy/guides/deployment/#cicd-integration): `FRANKENDEPLOY_SSH_KEY`, `--yes`, `doctor` as a gate
-- [Security Model](/frankendeploy/guides/server-setup/#security-model): what is done, what is deliberately not
+- [Security Model](/frankendeploy/security/): what is done, what is deliberately not
 - [Troubleshooting](/frankendeploy/guides/troubleshooting/): every error message, cause and fix
 
 ## Local development (optional)

@@ -99,7 +99,7 @@ You build on an Apple Silicon Mac for an Intel/AMD server; the image would not r
 frankendeploy server set prod remote_build true
 ```
 
-### `deployment failed health check: HTTP check failed (status: 500)` (or 404, 502)
+### `deployment failed health check: health check failed on my-app-new: HTTP check failed (status: 500) (after 30 attempts)`
 
 The new container started but did not answer 200 on the health path (`/` by default, `/api` for API Platform). FrankenDeploy prints the container's last 50 log lines right above this message: the cause is there (a missing variable, a failed database connection, a PHP fatal). The previous version is still serving; fix and deploy again.
 
@@ -107,7 +107,7 @@ The new container started but did not answer 200 on the health path (`/` by defa
 - **500**: read the logs. `frankendeploy logs prod` shows the live container; the failed one's logs were printed by the deploy.
 - **The app is just slow to start**: widen the window with `deploy.healthcheck_timeout` (90 seconds by default).
 
-### `deployment failed health check: container not running (status: exited)`
+### `deployment failed health check: health check failed on my-app-new: container not running (status: exited) (after 1 attempts)`
 
 The container died at startup. The printed logs say why; the usual suspects are a wrong `DATABASE_URL` for an external database, or a `pre_deploy` hook that needs a variable you have not set.
 
