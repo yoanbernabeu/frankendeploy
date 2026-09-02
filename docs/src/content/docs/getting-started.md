@@ -5,9 +5,9 @@ description: What is FrankenDeploy and why use it
 
 ## What is FrankenDeploy?
 
-**FrankenDeploy** is a CLI tool that simplifies deploying Symfony applications on VPS servers using [FrankenPHP](https://frankenphp.dev).
+**FrankenDeploy** is a CLI that deploys Symfony applications to any VPS using [FrankenPHP](https://frankenphp.dev).
 
-It provides a seamless experience from local development to production deployment, handling Docker configuration, server setup, and zero-downtime deployments.
+It covers the whole path from local development to production: Docker configuration, server preparation, zero-downtime deployments, rollbacks. One YAML file, a handful of commands, no PaaS.
 
 ## Built on FrankenPHP
 
@@ -17,37 +17,37 @@ FrankenDeploy is a deployment layer on top of **FrankenPHP**, the modern PHP app
 - **Worker mode** - Keeps your app in memory for ultra-fast responses
 - **Single binary** - No separate PHP-FPM, nginx, or Apache needed
 
-FrankenDeploy wraps all this power into simple commands.
+FrankenDeploy wraps all this into simple commands.
 
-## Key Features
+## What it does for you
 
 ### Auto-detection
-FrankenDeploy analyzes your Symfony project and automatically detects:
+`frankendeploy init` analyzes your Symfony project and detects:
 - PHP version from `composer.json` (8.2 minimum, required by FrankenPHP)
-- Required PHP extensions
-- Database driver (PostgreSQL, MySQL, SQLite)
-- Asset build tools (Webpack Encore, Vite, AssetMapper)
+- Required PHP extensions (from `composer.json`, plus what your database and Messenger transports need)
+- Database driver (PostgreSQL, MySQL, MariaDB, SQLite) from `.env` / `.env.local`
+- Asset build tool (Webpack Encore, Vite, AssetMapper, Tailwind bundle)
+- Symfony Messenger transports, Mailer, Scheduler
 - API Platform (sets the health check path to `/api`)
+- FrankenPHP worker mode when your runtime supports it
 
-### Docker Generation
-Generates optimized Docker configuration:
-- Multi-stage Dockerfile with FrankenPHP
-- compose.yaml for local development
-- Production-ready configuration
+### Docker generation
+Generates an optimized multi-stage `Dockerfile` for FrankenPHP, a `compose.yaml` for local development, and the supporting files. Missing files are generated at deploy time; files you customized are never overwritten.
 
-Missing files are generated automatically at deploy time — customized files are never overwritten.
+### Server preparation
+`frankendeploy server setup` turns a bare Ubuntu/Debian VPS into a deployment target: Docker, UFW firewall, Fail2ban, and Caddy as a front reverse proxy with automatic Let's Encrypt certificates. `frankendeploy doctor` checks everything (local Docker, SSH, server, DNS) and tells you exactly what to fix before you deploy.
 
-### One-Command Deployment
+### One-command, zero-downtime deployment
 ```bash
-frankendeploy deploy production
+frankendeploy deploy prod
 ```
-Handles everything: building, transferring, starting containers, health checks, and cleanup.
+Builds the image (locally or on the server), transfers it, starts the new version next to the old one, runs your migrations, checks the application health, then switches traffic. If anything fails before the switch, the old version keeps serving. A managed database, its credentials and a backup before each migration are handled for you.
 
-### Rolling Deployments
-- Zero-downtime deployments
-- Automatic health checks
-- Instant rollback if something fails
-- Release history management
+### Operations
+- `rollback` to any kept release, with the same health check as a deploy
+- `env set` / `env push` for production secrets, applied without downtime with `--reload`
+- `logs`, `exec`, `shell` on the running container
+- Several applications on one VPS, each on its own isolated Docker network
 
 ## Quick Example
 
@@ -55,25 +55,24 @@ Handles everything: building, transferring, starting containers, health checks, 
 # In your Symfony project
 cd my-symfony-app
 
-# Initialize FrankenDeploy (with optional domain)
+# Analyze the project and create frankendeploy.yaml
 frankendeploy init --domain my-app.com
 
-# Generate Docker files (optional — deploy does it for you)
+# Optional: start the local development environment
 frankendeploy build
-
-# Start local development
 frankendeploy dev up
 
-# Configure a server (one-time setup)
-frankendeploy server add production deploy@my-vps.com
-frankendeploy server setup production --email admin@example.com
+# Declare and prepare a server (one-time)
+frankendeploy server add prod deploy@my-vps.com
+frankendeploy server setup prod --email admin@example.com
+frankendeploy doctor prod
 
-# Set environment variables for this app
+# Production secrets for this app
 # (DATABASE_URL is injected automatically with a managed database)
-frankendeploy env set production APP_SECRET="your-secret"
+openssl rand -hex 32 | frankendeploy env set prod APP_SECRET --from-stdin
 
-# Deploy!
-frankendeploy deploy production --remote-build
+# Deploy
+frankendeploy deploy prod
 ```
 
 ## Next Steps

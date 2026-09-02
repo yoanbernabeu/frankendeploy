@@ -1,30 +1,40 @@
 ---
 title: Environment Variables
-description: Managing environment variables in production
+description: Managing production secrets and configuration
 ---
 
-## Overview
+## Where Variables Live
 
-FrankenDeploy stores environment variables **per application** in a `.env.local` file on the server. Each application has its own isolated environment variables that persist across deployments.
+Production variables are stored **on the server, per application**, in `/opt/frankendeploy/apps/<app>/shared/.env.local`. The file is mounted read-only into the app and worker containers, survives deploys and rollbacks, and is never part of your repository.
 
-**Important:** Environment variables are tied to the current project (defined in `frankendeploy.yaml`), not to the server globally.
+Commands are run from the project directory: the application is the one in `frankendeploy.yaml`, the server is the argument.
+
+## What FrankenDeploy Sets for You
+
+| Variable | Value |
+|----------|-------|
+| `APP_ENV` | `prod` |
+| `APP_DEBUG` | `0` |
+| `SERVER_NAME` | `:8080` (the port Caddy proxies to) |
+| `DATABASE_URL` | Generated and injected with a managed database (`database.managed: true`). With an external database, set it yourself |
+
+The `env.prod` section of `frankendeploy.yaml` is **not** applied in production: it only feeds the generated `compose.prod.yaml`. Everything the app needs at runtime goes through the commands below.
 
 ## Setting Variables
 
 ```bash
-# Set a single variable
-frankendeploy env set prod APP_SECRET="your-secret-key"
-frankendeploy env set prod DATABASE_URL="postgresql://user:pass@host/db"
+# Set a variable
+frankendeploy env set prod MAILER_DSN="smtp://user:pass@smtp.example.com:587"
 
-# Apply changes immediately (rolling restart)
+# Apply it right away with a rolling restart (see below)
 frankendeploy env set prod MAILER_DSN="smtp://..." --reload
 ```
 
-Without `--reload`, changes take effect on the next deployment.
+Without `--reload`, the change applies at the next deployment.
 
 ### Secrets: use `--from-stdin`
 
-Passing a secret as `KEY=value` leaves it in your shell history. With `--from-stdin`, the value never touches the history:
+Passing a secret as `KEY=value` leaves it in your shell history. With `--from-stdin`, the value never touches it:
 
 ```bash
 # Interactive: hidden prompt
@@ -34,21 +44,18 @@ frankendeploy env set prod APP_SECRET --from-stdin
 openssl rand -hex 32 | frankendeploy env set prod APP_SECRET --from-stdin
 ```
 
-## Listing Variables
+`deploy` refuses to start when `APP_SECRET` is missing (or `DATABASE_URL` with an external database), and offers to generate `APP_SECRET` for you in interactive mode.
+
+## Listing and Reading
 
 ```bash
-frankendeploy env list prod
-```
-
-Sensitive values (passwords, secrets, tokens) are automatically masked in the output.
-
-## Getting a Single Variable
-
-```bash
+frankendeploy env list prod            # all variables, sensitive values masked
 frankendeploy env get prod DATABASE_URL
 ```
 
-## Removing Variables
+Values of keys containing `SECRET`, `PASSWORD`, `PASS`, `KEY`, `TOKEN`, `DSN` or `DATABASE_URL` are masked in `env list` and in `--verbose` output; `env get` shows the full value.
+
+## Removing
 
 ```bash
 frankendeploy env remove prod OLD_VARIABLE
@@ -56,72 +63,64 @@ frankendeploy env remove prod OLD_VARIABLE
 
 ## Bulk Operations
 
-### Push a .env file
+### Push a `.env` file
 
-Push a local `.env` file to the server. Variables are merged with existing ones:
+Variables of a local file are merged into the server's `.env.local` (existing keys are overwritten, others kept):
 
 ```bash
-# Create a local .env.prod file
-echo "APP_SECRET=my-secret" > .env.prod
-echo "DATABASE_URL=postgresql://..." >> .env.prod
-
-# Push to server
 frankendeploy env push prod .env.prod
-
-# Push and apply immediately
 frankendeploy env push prod .env.prod --reload
 ```
 
-### Pull from server
+Only files named `.env*` are accepted.
 
-Download current environment variables to a local backup file:
+### Pull from the server
 
 ```bash
 frankendeploy env pull prod
-# Creates .env.prod.backup
+# writes .env.prod.backup (permissions 600) in the current directory
 ```
+
+The file is named after the server (`.env.<server>.backup`). Do not commit it.
 
 ## Zero-Downtime Updates
 
-The `--reload` flag performs a rolling restart:
+`--reload` restarts the application without dropping a request, with the same mechanism as a deploy:
 
-1. Starts a new container with updated environment
-2. Waits for health check to pass
-3. Switches traffic to the new container
-4. Removes the old container
+1. A new container starts with the updated `.env.local`, on the same image
+2. FrankenDeploy waits for its health check
+3. Traffic switches to it (rename-based swap)
+4. The old container is stopped
 
-This minimizes downtime to near-zero.
+If the new container never becomes healthy, it is removed and the old one keeps serving.
 
 ## Required Variables
 
-For Symfony applications, you typically need:
-
-| Variable | Description |
-|----------|-------------|
-| `APP_SECRET` | Symfony secret key (required) |
-| `APP_ENV` | Environment (auto-set to `prod`) |
-| `DATABASE_URL` | Database connection string — **injected automatically** with a managed database (`database.managed: true`); only set it for an external database |
-| `MAILER_DSN` | Email transport (optional) |
+| Variable | Notes |
+|----------|-------|
+| `APP_SECRET` | Required by Symfony. Checked before every deploy |
+| `DATABASE_URL` | Injected automatically with a managed database. Required, and checked, with an external one |
+| `MAILER_DSN`, `MESSENGER_TRANSPORT_DSN`, … | Whatever your `config/packages/*.yaml` reference through `%env()%` |
 
 ## Security Notes
 
-- Variables are stored in `/opt/frankendeploy/apps/<app>/shared/.env.local`
-- Every write (`env set`, `env push`, `env remove`, deploy-generated secrets) enforces `chmod 600` on the file — secrets are never left world-readable
-- The file is mounted read-only into containers
-- Sensitive values are masked in `env list` output and in verbose command logs (same detection list for both)
-- Never commit `.env.prod.backup` files to git
-- Use strong, unique secrets for production
+- Every write (`env set`, `env push`, `env remove`, credentials generated by a deploy) enforces `chmod 600` on the server file
+- The file is mounted read-only into the containers
+- Secrets are never written to `frankendeploy.yaml` or transmitted through Git
+- Sensitive values are masked in `env list` and in verbose logs (same detection list for both)
+- The file is stored in clear on the server disk, protected by its permissions: anyone with root or SSH access to the server can read it. Encrypting it there would not help, since the key would sit next to it. Use your provider's disk encryption for backups and snapshots
+- The Symfony secrets vault works as usual: commit the vault, set only `SYMFONY_DECRYPTION_SECRET` with `env set --from-stdin`
 
 ## Workflow Example
 
 ```bash
-# 1. Configure your production environment
-frankendeploy env set prod APP_SECRET=$(openssl rand -hex 32)
-frankendeploy env set prod DATABASE_URL="postgresql://user:pass@db.example.com/myapp"
+# 1. Production secrets, once
+openssl rand -hex 32 | frankendeploy env set prod APP_SECRET --from-stdin
+frankendeploy env set prod MAILER_DSN --from-stdin
 
-# 2. Deploy your application
-frankendeploy deploy prod --remote-build
+# 2. Deploy
+frankendeploy deploy prod
 
-# 3. Later, update a variable with zero downtime
+# 3. Later, change a value without downtime
 frankendeploy env set prod FEATURE_FLAG=enabled --reload
 ```
