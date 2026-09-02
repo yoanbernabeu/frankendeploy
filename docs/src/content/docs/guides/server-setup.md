@@ -279,7 +279,7 @@ What FrankenDeploy does on the server, and what it deliberately leaves to you.
 
 - The application runs as a **non-root user** on an unprivileged port (8080)
 - **No port is published** for the app, the worker or the database: the only way in is Caddy, on 80 and 443
-- **TLS** with automatic Let's Encrypt certificates, HSTS enabled
+- **TLS** with automatic Let's Encrypt certificates, HSTS enabled; Symfony trusts only Caddy as a proxy (`SYMFONY_TRUSTED_PROXIES` set to the private subnets), so it sees the real client IP and the HTTPS scheme
 - **One Docker network per application**: apps sharing a VPS cannot reach each other's containers
 - **Secrets** live in `.env.local` on the server, `chmod 600`, mounted read-only; `env set --from-stdin` keeps them out of your shell history
 - **Managed databases** get random credentials, a random one-time root password (MySQL/MariaDB), and a dump before every migration
