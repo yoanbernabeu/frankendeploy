@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **No more active health check in the generated reverse proxy**: Caddy probed the live container every 30 s with a 5 s timeout, and with a single upstream a failed probe turned every request into a 503 "no upstreams available" for the next 30 s. It already bit once with API-only apps returning 404 on `/` (#69) and again under load, where the probe queued behind real requests and cut all traffic while the application was merely slow. The deploy-time health check, run before the traffic switch, remains the one that protects production. Per-request timeouts replace the probe (5 s dial, 60 s response headers): a frozen container ends in a 504 for the affected request, never in an endless wait, while other requests keep flowing - @yoanbernabeu
+
 ## [0.14.0] - 2026-09-02
 
 FrankenPHP worker mode no longer depends on the deprecated `runtime/frankenphp-symfony` package: any Symfony 7.4+ app is eligible out of the box, and the generated Caddyfile no longer forces a runtime class that would not exist. Found and validated live while preparing a Symfony 8.1 / API Platform 4 demo for API Platform Con 2026: on a 2 vCPU VPS the same load test went from 23 to 53 requests per second served, p95 from 5.5 s to 0.83 s.

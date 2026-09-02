@@ -107,7 +107,9 @@ deploy:
   healthcheck_path: /health
 ```
 
-The default path is `/`. For **API Platform** projects, `init` detects the framework and sets the path to `/api` automatically — a pure API returns 404 on `/`, which would fail every health check. The same path is also used by Caddy's active health checks on the running container **and by the Docker `HEALTHCHECK` baked into the generated image**, so `docker ps` health status reflects the application actually answering, not just the web server process being up.
+The default path is `/`. For **API Platform** projects, `init` detects the framework and sets the path to `/api` automatically — a pure API returns 404 on `/`, which would fail every health check. The same path is also used **by the Docker `HEALTHCHECK` baked into the generated image**, so `docker ps` health status reflects the application actually answering, not just the web server process being up.
+
+The reverse proxy deliberately runs **no active health check** on the live container: with a single upstream there is nothing to fail over to, and a probe timing out under load would turn a slow application into a 503 for every visitor. The health check that protects production is the one run before the traffic switch. Per-request timeouts apply instead (5 s to connect, 60 s for the response headers): a container that accepts connections but never answers costs the affected visitor a 504, not an endless wait.
 
 The check window is generous by default (90 seconds — a cold Symfony container needs time for opcache warmup and database wait) and tunable:
 
