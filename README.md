@@ -35,7 +35,12 @@
 
 ## Installation
 
-**Linux/macOS:**
+**Homebrew (macOS/Linux):**
+```bash
+brew install yoanbernabeu/tap/frankendeploy
+```
+
+**Install script (Linux/macOS):**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yoanbernabeu/frankendeploy/main/scripts/install.sh | sh
 ```
