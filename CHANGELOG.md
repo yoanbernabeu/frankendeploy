@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`doctor` no longer reports the app network on a bare server**: the App network check only runs once Docker is present (on a bare server every docker command failed for the same reason), and a network not created yet is reported as fine rather than as a warning, since the first deploy creates it - @yoanbernabeu
+
 ## [0.15.0] - 2026-09-02
 
 Applications sharing a VPS no longer share a Docker network: each one now gets its own, with Caddy attached to it, so a compromised app cannot reach another app's database. Validated live on a real installation deployed on the shared network (La Drache): migrated in one deploy, zero downtime, and from the shared network the database is not even resolvable any more.

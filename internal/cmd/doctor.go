@@ -80,18 +80,20 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	defer conn.Client.Close()
 	client := conn.Client
 
+	remoteDocker := checkRemoteDocker(ctx, client)
 	results = append(results,
 		doctorResult{Name: "SSH connection", OK: true, Detail: fmt.Sprintf("%s@%s:%d", conn.Server.User, conn.Server.Host, conn.Server.Port)},
 		checkRemoteSudo(ctx, client),
-		checkRemoteDocker(ctx, client),
+		remoteDocker,
 		checkDockerNetwork(ctx, client),
 		checkCaddyRunning(ctx, client),
 		checkDiskSpace(ctx, client),
 	)
 
-	// --- Project checks (only inside a project) ---
+	// --- Project checks (only inside a project, and only once Docker is
+	// there: on a bare server every docker command fails for the same reason)
 	projectCfg, projectErr := config.LoadProjectConfig(GetConfigFile())
-	if projectErr == nil {
+	if projectErr == nil && remoteDocker.OK {
 		results = append(results, checkAppNetwork(ctx, client, projectCfg.Name))
 	}
 
@@ -256,7 +258,8 @@ func checkAppNetwork(ctx context.Context, client ssh.Executor, appName string) d
 
 	result, err := client.Exec(ctx, fmt.Sprintf("docker network inspect %s --format '{{.Name}}' 2>/dev/null", network))
 	if err != nil || result.ExitCode != 0 || strings.TrimSpace(result.Stdout) == "" {
-		return doctorResult{Name: name, OK: true, Warning: true, Detail: fmt.Sprintf("%s not created yet (created by the first deploy)", network)}
+		// Nothing to fix: the first deploy creates it
+		return doctorResult{Name: name, OK: true, Detail: fmt.Sprintf("%s (created by the first deploy)", network)}
 	}
 
 	attached := func(container string) (onApp, onShared, exists bool) {

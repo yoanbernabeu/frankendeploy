@@ -169,8 +169,8 @@ func TestDoctorAppNetwork(t *testing.T) {
 		"docker network inspect frankendeploy-myapp": {ExitCode: 1},
 	})
 	res := checkAppNetwork(context.Background(), notCreated, "myapp")
-	if !res.OK || !res.Warning {
-		t.Errorf("a network not created yet is a warning, not a failure: %+v", res)
+	if !res.OK || res.Warning {
+		t.Errorf("a network not created yet is fine (the first deploy creates it), got %+v", res)
 	}
 
 	caddyMissing := scriptedMock(map[string]ssh.ExecResult{
