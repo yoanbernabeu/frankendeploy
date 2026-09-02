@@ -37,6 +37,7 @@ func makeSteps(r *stepRecorder) Steps {
 		ShowContainerLogs:    func() { r.record("logs") },
 		SwapContainers:       func(oldExists bool) error { r.record("swap"); return nil },
 		DeployWorkers:        func() error { r.record("workers"); return nil },
+		IsolateNetwork:       func() { r.record("isolate-network") },
 		RunPostDeployHooks:   func() error { r.record("post-hooks"); return nil },
 		CaddyAppConfigExists: func() bool { r.record("caddy-exists"); return true },
 		UpdateCaddy:          func() error { r.record("caddy"); return nil },
@@ -68,7 +69,7 @@ func TestRunPipeline_HappyPathOrder(t *testing.T) {
 		t.Fatalf("RunPipeline: %v", err)
 	}
 
-	want := []string{"prepare", "old-exists", "start", "backup", "pre-hooks", "migration-check", "health", "swap", "workers", "post-hooks", "caddy-exists", "caddy", "cleanup"}
+	want := []string{"prepare", "old-exists", "start", "backup", "pre-hooks", "migration-check", "health", "swap", "workers", "isolate-network", "post-hooks", "caddy-exists", "caddy", "cleanup"}
 	got := strings.Join(r.calls, ",")
 	if got != strings.Join(want, ",") {
 		t.Errorf("unexpected step order:\n got %s\nwant %s", got, strings.Join(want, ","))

@@ -161,6 +161,15 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		PrintSuccess("Image transferred")
 	}
 
+	// Step 3a: Dedicated network for the app. Created on first deploy with
+	// Caddy attached to it; an installation deployed on the shared network
+	// migrates transparently (database attached here, detached from the
+	// shared network once the old container is gone).
+	PrintInfo("Preparing application network...")
+	if err := deploy.EnsureAppNetwork(ctx, client, projectCfg.Name, cmdLogger{}); err != nil {
+		return fmt.Errorf("network setup failed: %w", err)
+	}
+
 	// Step 3b: Deploy managed database if configured
 	var databaseURL string
 	if projectCfg.Database.Driver != "" && projectCfg.Database.IsManaged() {
@@ -211,6 +220,9 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		},
 		DeployWorkers: func() error {
 			return deployMessengerWorkers(ctx, client, projectCfg, imageName, remoteAppPath, databaseURL)
+		},
+		IsolateNetwork: func() {
+			deploy.DetachFromSharedNetwork(ctx, client, projectCfg.Name, cmdLogger{})
 		},
 		RunPostDeployHooks: func() error {
 			return runDeployHooks(ctx, client, projectCfg.Name, projectCfg.Deploy.Hooks.PostDeploy)
@@ -499,7 +511,7 @@ func buildAppRunCommand(cfg *config.ProjectConfig, imageName, appPath, databaseU
 		%s%s \
 		%s \
 		%s \
-		%s`, containerName, constants.NetworkName, constants.ContainerUser, constants.DockerLogOptions, limits, envVars, volumeMounts, imageName)
+		%s`, containerName, constants.AppNetworkName(cfg.Name), constants.ContainerUser, constants.DockerLogOptions, limits, envVars, volumeMounts, imageName)
 }
 
 // readSavedDatabaseURL reads the DATABASE_URL persisted by a managed-database
@@ -919,7 +931,7 @@ func deployMessengerWorkers(ctx context.Context, client ssh.Executor, cfg *confi
 		%s \
 		%s \
 		php bin/console messenger:consume %s --time-limit=3600 --memory-limit=256M -vv`,
-		workerName, constants.NetworkName, constants.ContainerUser, constants.DockerLogOptions, envVars, volumeMounts, imageName, transportsArg)
+		workerName, constants.AppNetworkName(cfg.Name), constants.ContainerUser, constants.DockerLogOptions, envVars, volumeMounts, imageName, transportsArg)
 
 	result, err := client.Exec(ctx, workerCmd)
 	if err != nil {

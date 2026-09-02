@@ -440,6 +440,10 @@ func reloadContainer(ctx context.Context, client ssh.Executor, cfg *config.Proje
 	appPath := constants.AppBasePath(appName)
 	tempName := appName + "-new"
 
+	if err := deploy.EnsureAppNetwork(ctx, client, appName, cmdLogger{}); err != nil {
+		return fmt.Errorf("network setup failed: %w", err)
+	}
+
 	// Start new container with updated env (same command as deploy/rollback)
 	databaseURL := readSavedDatabaseURL(ctx, client, appPath)
 	if err := startNewContainer(ctx, client, cfg, imageName, appPath, "", databaseURL, tempName); err != nil {
@@ -470,6 +474,7 @@ func reloadContainer(ctx context.Context, client ssh.Executor, cfg *config.Proje
 		forceRemoveContainer(ctx, client, tempName)
 		return err
 	}
+	deploy.DetachFromSharedNetwork(ctx, client, appName, cmdLogger{})
 
 	return nil
 }

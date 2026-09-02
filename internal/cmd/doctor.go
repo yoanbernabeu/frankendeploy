@@ -28,6 +28,7 @@ Remote checks (over SSH):
 - 'frankendeploy' network present
 - Caddy reverse proxy container running
 - free disk space
+- inside a project: the app runs on its own isolated network
 
 DNS check (when a domain is configured or passed via --domain):
 - the domain resolves to the server's public IP — the #1 cause of
@@ -88,12 +89,16 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checkDiskSpace(ctx, client),
 	)
 
+	// --- Project checks (only inside a project) ---
+	projectCfg, projectErr := config.LoadProjectConfig(GetConfigFile())
+	if projectErr == nil {
+		results = append(results, checkAppNetwork(ctx, client, projectCfg.Name))
+	}
+
 	// --- DNS check ---
 	domain := doctorDomain
-	if domain == "" {
-		if cfg, err := config.LoadProjectConfig(GetConfigFile()); err == nil {
-			domain = cfg.Deploy.Domain
-		}
+	if domain == "" && projectErr == nil {
+		domain = projectCfg.Deploy.Domain
 	}
 	if domain != "" {
 		serverIP := detectServerPublicIP(ctx, client, conn.Server.Host)
@@ -240,6 +245,62 @@ func checkDockerNetwork(ctx context.Context, client ssh.Executor) doctorResult {
 		}
 	}
 	return doctorResult{Name: "Docker network", OK: true, Detail: constants.NetworkName}
+}
+
+// checkAppNetwork verifies the app runs isolated on its own network: the
+// network exists, Caddy is attached to it, and no container of the app is
+// still on the shared network (a migration left unfinished).
+func checkAppNetwork(ctx context.Context, client ssh.Executor, appName string) doctorResult {
+	network := constants.AppNetworkName(appName)
+	name := "App network"
+
+	result, err := client.Exec(ctx, fmt.Sprintf("docker network inspect %s --format '{{.Name}}' 2>/dev/null", network))
+	if err != nil || result.ExitCode != 0 || strings.TrimSpace(result.Stdout) == "" {
+		return doctorResult{Name: name, OK: true, Warning: true, Detail: fmt.Sprintf("%s not created yet (created by the first deploy)", network)}
+	}
+
+	attached := func(container string) (onApp, onShared, exists bool) {
+		res, err := client.Exec(ctx, fmt.Sprintf(`docker inspect %s --format '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}}' 2>/dev/null`, container))
+		if err != nil || res.ExitCode != 0 {
+			return false, false, false
+		}
+		for _, n := range strings.Fields(res.Stdout) {
+			switch n {
+			case network:
+				onApp = true
+			case constants.NetworkName:
+				onShared = true
+			}
+		}
+		return onApp, onShared, true
+	}
+
+	if onApp, _, exists := attached("caddy"); exists && !onApp {
+		return doctorResult{
+			Name:   name,
+			OK:     false,
+			Detail: fmt.Sprintf("Caddy is not attached to %s: the app is not reachable", network),
+			Advice: fmt.Sprintf("Run 'frankendeploy deploy <server>' again, or attach it manually:\n  docker network connect %s caddy", network),
+		}
+	}
+
+	var leftovers []string
+	for _, container := range []string{appName, appName + "-worker", appName + "-db"} {
+		if _, onShared, exists := attached(container); exists && onShared {
+			leftovers = append(leftovers, container)
+		}
+	}
+	if len(leftovers) > 0 {
+		return doctorResult{
+			Name:    name,
+			OK:      false,
+			Warning: true,
+			Detail:  fmt.Sprintf("still on the shared network %s: %s", constants.NetworkName, strings.Join(leftovers, ", ")),
+			Advice:  "Run 'frankendeploy deploy <server>' again to finish the migration to the per-app network.",
+		}
+	}
+
+	return doctorResult{Name: name, OK: true, Detail: fmt.Sprintf("%s (isolated)", network)}
 }
 
 // checkCaddyRunning verifies the Caddy front proxy container is up.

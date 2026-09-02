@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/yoanbernabeu/frankendeploy/internal/config"
 	"github.com/yoanbernabeu/frankendeploy/internal/constants"
+	"github.com/yoanbernabeu/frankendeploy/internal/deploy"
 	"github.com/yoanbernabeu/frankendeploy/internal/security"
 )
 
@@ -200,6 +201,11 @@ func runAppRemove(cmd *cobra.Command, args []string) error {
 	// Remove Docker images
 	if _, err := conn.Client.Exec(ctx, fmt.Sprintf("docker images %s -q | xargs -r docker rmi 2>/dev/null || true", appName)); err != nil {
 		PrintVerbose("Could not remove Docker images: %v", err)
+	}
+
+	// Remove the app network (Caddy detached first)
+	if err := deploy.RemoveAppNetwork(ctx, conn.Client, appName); err != nil {
+		PrintVerbose("Could not remove app network: %v", err)
 	}
 
 	if appRemoveKeepData {
