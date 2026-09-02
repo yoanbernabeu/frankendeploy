@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-09-02
+
+The generated reverse proxy no longer runs an active health check that could turn a slow application into a 503 for everyone; per-request timeouts take its place. Found with a 500-user load test on a 2 vCPU VPS: 56% of requests answered 503 by Caddy while the application itself had no error.
+
 ### Fixed
 
 - **No more active health check in the generated reverse proxy**: Caddy probed the live container every 30 s with a 5 s timeout, and with a single upstream a failed probe turned every request into a 503 "no upstreams available" for the next 30 s. It already bit once with API-only apps returning 404 on `/` (#69) and again under load, where the probe queued behind real requests and cut all traffic while the application was merely slow. The deploy-time health check, run before the traffic switch, remains the one that protects production. Per-request timeouts replace the probe (5 s dial, 60 s response headers): a frozen container ends in a 504 for the affected request, never in an endless wait, while other requests keep flowing - @yoanbernabeu
