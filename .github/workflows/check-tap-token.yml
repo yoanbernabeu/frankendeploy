@@ -1,0 +1,28 @@
+name: Check Homebrew tap token
+
+# Manual check that the GH_PAT secret can update the Homebrew formula, to run
+# after rotating the token and before tagging a release.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: GH_PAT can push to homebrew-tap
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the Homebrew tap token
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::The GH_PAT secret is empty. Create a fine-grained PAT with Contents: read and write on yoanbernabeu/homebrew-tap and store it as GH_PAT."
+            exit 1
+          fi
+          if ! gh api repos/yoanbernabeu/homebrew-tap --jq '.permissions.push' | grep -q true; then
+            echo "::error::GH_PAT cannot push to yoanbernabeu/homebrew-tap (invalid, expired, or missing the Contents: write permission)."
+            exit 1
+          fi
+          echo "GH_PAT can push to yoanbernabeu/homebrew-tap."

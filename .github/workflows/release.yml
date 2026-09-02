@@ -22,6 +22,23 @@ jobs:
         with:
           go-version: "1.21"
 
+      # Fail before anything is published: a bad GH_PAT used to surface only
+      # after the GitHub release and its assets existed, leaving the Homebrew
+      # formula stale and the run impossible to replay cleanly.
+      - name: Check the Homebrew tap token
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::The GH_PAT secret is empty. Create a fine-grained PAT with Contents: read and write on yoanbernabeu/homebrew-tap and store it as GH_PAT."
+            exit 1
+          fi
+          if ! gh api repos/yoanbernabeu/homebrew-tap --jq '.permissions.push' | grep -q true; then
+            echo "::error::GH_PAT cannot push to yoanbernabeu/homebrew-tap (invalid, expired, or missing the Contents: write permission)."
+            exit 1
+          fi
+          echo "GH_PAT can push to yoanbernabeu/homebrew-tap."
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
