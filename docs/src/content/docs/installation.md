@@ -3,9 +3,17 @@ title: Installation
 description: How to install FrankenDeploy on your system
 ---
 
-## Quick Install
+## Homebrew (macOS, Linux)
 
-The fastest way to install FrankenDeploy:
+The easiest way to install and keep FrankenDeploy up to date:
+
+```bash
+brew install yoanbernabeu/tap/frankendeploy
+```
+
+Later, `brew upgrade frankendeploy` follows the releases.
+
+## Install Script
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yoanbernabeu/frankendeploy/main/scripts/install.sh | sh
@@ -19,13 +27,6 @@ If you have Go 1.24+ installed:
 
 ```bash
 go install github.com/yoanbernabeu/frankendeploy/cmd/frankendeploy@latest
-```
-
-## Homebrew (macOS)
-
-```bash
-brew tap yoanbernabeu/tap
-brew install frankendeploy
 ```
 
 ## Manual Download
