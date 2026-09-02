@@ -1,82 +1,50 @@
 ---
 title: Introduction
-description: What is FrankenDeploy and why use it
+description: What FrankenDeploy is, who it is for, and where to start
 ---
 
-## What is FrankenDeploy?
+## In one sentence
 
-**FrankenDeploy** is a CLI that deploys Symfony applications to any VPS using [FrankenPHP](https://frankenphp.dev).
+**FrankenDeploy** puts a Symfony application online on a server you own, with one command, and keeps it online while you ship new versions.
 
-It covers the whole path from local development to production: Docker configuration, server preparation, zero-downtime deployments, rollbacks. One YAML file, a handful of commands, no PaaS.
+```bash
+frankendeploy deploy prod
+```
+
+Behind that command: a Docker image built for your app, a server prepared with a firewall and HTTPS, a health check before every traffic switch, a database backed up before every migration, and a rollback when something goes wrong. You keep a plain VPS, a plain Symfony project, and no vendor to depend on.
+
+## Where to start
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 not-prose my-6">
+  <a href="/frankendeploy/before-you-start/" class="block rounded-xl border border-white/10 bg-white/5 p-5 hover:bg-white/10 transition-colors">
+    <div class="text-lg font-semibold text-white mb-1">I have never deployed anything</div>
+    <div class="text-[#C3B2D3] text-sm">You have a Symfony app that works on your machine and you want it on the Internet. Start with <strong>Before You Start</strong>, then follow <strong>Your First Deployment</strong> step by step. About an hour, no prior server knowledge.</div>
+  </a>
+  <a href="/frankendeploy/quickstart/" class="block rounded-xl border border-white/10 bg-white/5 p-5 hover:bg-white/10 transition-colors">
+    <div class="text-lg font-semibold text-white mb-1">I know Docker and SSH</div>
+    <div class="text-[#C3B2D3] text-sm">You want the commands, then the details. The <strong>Quick Start</strong> is ten lines; <strong>Under the Hood</strong> and the <strong>frankendeploy.yaml reference</strong> tell you exactly what runs on the server.</div>
+  </a>
+</div>
+
+## What it does
+
+- **Reads your project** and writes one configuration file, `frankendeploy.yaml`: PHP version and extensions, database, assets, Messenger, worker mode, all detected from your code.
+- **Prepares a bare Ubuntu or Debian server**: Docker, UFW firewall, Fail2ban, and Caddy as a reverse proxy with automatic Let's Encrypt certificates. `frankendeploy doctor` checks the machine, the server and your DNS, and names the command that fixes each problem.
+- **Deploys without downtime**: the new version starts next to the old one, runs its migrations, passes a health check, and only then receives the traffic. If anything fails first, the old version keeps serving and nothing changed for your visitors.
+- **Runs the database for you**: PostgreSQL, MySQL or MariaDB in a container, credentials generated and injected, a dump before every migration.
+- **Operates the app**: `logs`, `exec`, `shell`, `env set` for secrets applied without downtime, `rollback` to any kept release with the same health check as a deploy.
+- **Hosts several apps on one server**, each on its own isolated Docker network.
+
+## What it is not
+
+- **Not a PaaS**: there is no dashboard, no account, no monthly fee. The server is yours, and so is its maintenance (system updates, backups off the machine). The [Security Model](/frankendeploy/guides/server-setup/#security-model) says exactly what FrankenDeploy handles and what it leaves to you.
+- **Not a cluster**: one VPS, one copy of your app. Enough for most projects; not built for horizontal scaling.
+- **Not magic**: it runs standard Docker, Caddy and shell commands on an ordinary Linux server. Everything it does can be read in [the deployment guide](/frankendeploy/guides/deployment/) and in the [source code](https://github.com/yoanbernabeu/frankendeploy).
 
 ## Built on FrankenPHP
 
-FrankenDeploy is a deployment layer on top of **FrankenPHP**, the modern PHP application server created by Kévin Dunglas. FrankenPHP combines:
+FrankenDeploy is a deployment layer on top of [FrankenPHP](https://frankenphp.dev), the PHP application server created by Kévin Dunglas: Caddy and PHP in a single binary, HTTP/2 and HTTP/3, and a worker mode that keeps your Symfony kernel in memory between requests. FrankenDeploy generates the Docker image, FrankenPHP runs it.
 
-- **Caddy web server** - Automatic HTTPS, HTTP/2, HTTP/3
-- **Worker mode** - Keeps your app in memory for ultra-fast responses
-- **Single binary** - No separate PHP-FPM, nginx, or Apache needed
+## Status
 
-FrankenDeploy wraps all this into simple commands.
-
-## What it does for you
-
-### Auto-detection
-`frankendeploy init` analyzes your Symfony project and detects:
-- PHP version from `composer.json` (8.2 minimum, required by FrankenPHP)
-- Required PHP extensions (from `composer.json`, plus what your database and Messenger transports need)
-- Database driver (PostgreSQL, MySQL, MariaDB, SQLite) from `.env` / `.env.local`
-- Asset build tool (Webpack Encore, Vite, AssetMapper, Tailwind bundle)
-- Symfony Messenger transports, Mailer, Scheduler
-- API Platform (sets the health check path to `/api`)
-- FrankenPHP worker mode when your runtime supports it
-
-### Docker generation
-Generates an optimized multi-stage `Dockerfile` for FrankenPHP, a `compose.yaml` for local development, and the supporting files. Missing files are generated at deploy time; files you customized are never overwritten.
-
-### Server preparation
-`frankendeploy server setup` turns a bare Ubuntu/Debian VPS into a deployment target: Docker, UFW firewall, Fail2ban, and Caddy as a front reverse proxy with automatic Let's Encrypt certificates. `frankendeploy doctor` checks everything (local Docker, SSH, server, DNS) and tells you exactly what to fix before you deploy.
-
-### One-command, zero-downtime deployment
-```bash
-frankendeploy deploy prod
-```
-Builds the image (locally or on the server), transfers it, starts the new version next to the old one, runs your migrations, checks the application health, then switches traffic. If anything fails before the switch, the old version keeps serving. A managed database, its credentials and a backup before each migration are handled for you.
-
-### Operations
-- `rollback` to any kept release, with the same health check as a deploy
-- `env set` / `env push` for production secrets, applied without downtime with `--reload`
-- `logs`, `exec`, `shell` on the running container
-- Several applications on one VPS, each on its own isolated Docker network
-
-## Quick Example
-
-```bash
-# In your Symfony project
-cd my-symfony-app
-
-# Analyze the project and create frankendeploy.yaml
-frankendeploy init --domain my-app.com
-
-# Optional: start the local development environment
-frankendeploy build
-frankendeploy dev up
-
-# Declare and prepare a server (one-time)
-frankendeploy server add prod deploy@my-vps.com
-frankendeploy server setup prod --email admin@example.com
-frankendeploy doctor prod
-
-# Production secrets for this app
-# (DATABASE_URL is injected automatically with a managed database)
-openssl rand -hex 32 | frankendeploy env set prod APP_SECRET --from-stdin
-
-# Deploy
-frankendeploy deploy prod
-```
-
-## Next Steps
-
-- [Installation](/frankendeploy/installation/) - Install FrankenDeploy on your system
-- [Quick Start](/frankendeploy/quickstart/) - Get up and running in 5 minutes
-- [Project Configuration](/frankendeploy/guides/configuration/) - Customize your deployment
+FrankenDeploy is open source (MIT) and young: the command set is stable, but breaking changes can still happen between minor versions. Each one is listed in the [changelog](https://github.com/yoanbernabeu/frankendeploy/blob/main/CHANGELOG.md).

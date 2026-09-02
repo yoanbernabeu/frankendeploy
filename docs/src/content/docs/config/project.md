@@ -213,9 +213,13 @@ The scanner reads `DATABASE_URL` from `.env` **and** `.env.local` (the latter wi
 | `true` (default for pgsql, mysql, mariadb) | FrankenDeploy creates the `<name>-db` container on the first deploy, generates random credentials, injects `DATABASE_URL` into the app, keeps the data in a Docker volume, and dumps the database before every migration |
 | `false` | You provide `DATABASE_URL` with `frankendeploy env set` (external database) |
 
-:::caution[SQLite]
+<div class="callout callout-warning">
+
+**SQLite**
+
 SQLite cannot run as a container: `managed: true` with `driver: sqlite` fails validation. For persistence in production, the directory of the database file is added to `shared_dirs` automatically.
-:::
+
+</div>
 
 ### `database.path`
 
