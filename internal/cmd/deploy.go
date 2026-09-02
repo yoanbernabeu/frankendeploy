@@ -484,7 +484,7 @@ func prepareRelease(ctx context.Context, client ssh.Executor, cfg *config.Projec
 // buildAppRunCommand builds the docker run command for the application
 // container. It is the single source of truth shared by deploy, rollback and
 // env reload: same volume mounts, env vars, non-root user and restart policy.
-func buildAppRunCommand(cfg *config.ProjectConfig, imageName, appPath, databaseURL, containerName string) string {
+func buildAppRunCommand(cfg *config.ProjectConfig, imageName, appPath, databaseURL, containerName string, extraEnv ...string) string {
 	sharedPath := filepath.Join(appPath, "shared")
 
 	volumeMounts := buildVolumeMounts(sharedPath, cfg.Deploy.EffectiveSharedDirs(), cfg.Deploy.EffectiveSharedFiles())
@@ -492,6 +492,9 @@ func buildAppRunCommand(cfg *config.ProjectConfig, imageName, appPath, databaseU
 	envVars := fmt.Sprintf("-e SERVER_NAME=:%s -e APP_ENV=prod -e APP_DEBUG=0", constants.AppPort)
 	if databaseURL != "" {
 		envVars += fmt.Sprintf(" -e DATABASE_URL=%s", security.ShellEscape(databaseURL))
+	}
+	for _, kv := range extraEnv {
+		envVars += " -e " + kv
 	}
 
 	// Optional resource limits (validated at config load: safe to interpolate)
@@ -514,6 +517,28 @@ func buildAppRunCommand(cfg *config.ProjectConfig, imageName, appPath, databaseU
 		%s`, containerName, constants.AppNetworkName(cfg.Name), constants.ContainerUser, constants.DockerLogOptions, limits, envVars, volumeMounts, imageName)
 }
 
+// trustedProxiesEnv returns the KEY=value pairs that make Symfony trust
+// Caddy's X-Forwarded-* headers (real client IP, HTTPS scheme, Secure
+// cookies). SYMFONY_TRUSTED_PROXIES is read natively by Symfony >= 7.2;
+// TRUSTED_PROXIES covers apps that wired framework.trusted_proxies to it
+// themselves. A docker -e value overrides .env.local, so nothing is
+// injected when the user manages either variable there.
+func trustedProxiesEnv(ctx context.Context, client ssh.Executor, appName string) []string {
+	vars, err := deploy.ReadEnvVars(ctx, client, appName)
+	if err == nil {
+		if _, ok := vars["SYMFONY_TRUSTED_PROXIES"]; ok {
+			return nil
+		}
+		if _, ok := vars["TRUSTED_PROXIES"]; ok {
+			return nil
+		}
+	}
+	return []string{
+		"SYMFONY_TRUSTED_PROXIES=" + constants.TrustedProxies,
+		"TRUSTED_PROXIES=" + constants.TrustedProxies,
+	}
+}
+
 // readSavedDatabaseURL reads the DATABASE_URL persisted by a managed-database
 // deploy (shared/.db_credentials). Returns "" when no managed database is
 // configured or the file cannot be read.
@@ -532,7 +557,7 @@ func startNewContainer(ctx context.Context, client ssh.Executor, cfg *config.Pro
 	// Remove any leftover temp container from a previous failed deploy
 	forceRemoveContainer(ctx, client, containerName)
 
-	dockerRunCmd := buildAppRunCommand(cfg, imageName, appPath, databaseURL, containerName)
+	dockerRunCmd := buildAppRunCommand(cfg, imageName, appPath, databaseURL, containerName, trustedProxiesEnv(ctx, client, cfg.Name)...)
 
 	PrintVerboseCommand(dockerRunCmd)
 	result, err := client.Exec(ctx, dockerRunCmd)

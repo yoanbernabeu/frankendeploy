@@ -406,3 +406,42 @@ func TestRunHealthCheckOnContainer_UsesConfiguredRetries(t *testing.T) {
 		t.Errorf("expected 2 attempts from config, got %d", curlAttempts)
 	}
 }
+
+func TestStartNewContainer_InjectsTrustedProxies(t *testing.T) {
+	mock := &ssh.MockExecutor{} // empty .env.local
+	cfg := &config.ProjectConfig{Name: "myapp"}
+
+	if err := startNewContainer(context.Background(), mock, cfg, "myapp:t1", "/opt/frankendeploy/apps/myapp", "t1", "", "myapp-new"); err != nil {
+		t.Fatalf("startNewContainer() unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		"-e SYMFONY_TRUSTED_PROXIES=127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
+		"-e TRUSTED_PROXIES=127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
+	} {
+		if !hasCommand(mock.Commands, want) {
+			t.Errorf("Symfony must be told to trust Caddy, missing %q in: %v", want, mock.Commands)
+		}
+	}
+}
+
+func TestStartNewContainer_RespectsUserTrustedProxies(t *testing.T) {
+	for _, userVar := range []string{"TRUSTED_PROXIES", "SYMFONY_TRUSTED_PROXIES"} {
+		mock := &ssh.MockExecutor{
+			ExecFunc: func(_ context.Context, command string) (*ssh.ExecResult, error) {
+				if strings.Contains(command, ".env.local") {
+					return &ssh.ExecResult{Stdout: userVar + "=203.0.113.9\n", ExitCode: 0}, nil
+				}
+				return &ssh.ExecResult{ExitCode: 0}, nil
+			},
+		}
+		cfg := &config.ProjectConfig{Name: "myapp"}
+
+		if err := startNewContainer(context.Background(), mock, cfg, "myapp:t1", "/opt/frankendeploy/apps/myapp", "t1", "", "myapp-new"); err != nil {
+			t.Fatalf("startNewContainer() unexpected error: %v", err)
+		}
+		// A docker -e value would override the user's .env.local: inject nothing
+		if hasCommand(mock.Commands, "TRUSTED_PROXIES=") {
+			t.Errorf("%s set by the user in .env.local: nothing must be injected, got %v", userVar, mock.Commands)
+		}
+	}
+}

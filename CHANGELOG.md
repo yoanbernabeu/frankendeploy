@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Symfony trusts Caddy out of the box**: the app container now receives `SYMFONY_TRUSTED_PROXIES` (read natively by Symfony >= 7.2) and `TRUSTED_PROXIES` set to the private subnets, so the real client IP and the HTTPS scheme reach the application: absolute URLs are generated in `https://`, session cookies get the `Secure` flag, and rate limiters see the visitor rather than the proxy. Safe because only Caddy can reach the app on its private per-app network. Nothing is injected when either variable is already defined in the server's `.env.local` - @yoanbernabeu
+
 ## [0.15.1] - 2026-09-02
 
 Follow-up to the per-app networks of 0.15.0: `doctor` on a freshly set up server is all green again.
