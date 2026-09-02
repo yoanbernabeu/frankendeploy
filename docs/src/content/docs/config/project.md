@@ -38,8 +38,9 @@ php:
 frankenphp:
   # Worker mode: boots the Symfony kernel once and keeps it in memory
   # between requests (significant latency improvement).
-  # Requires the runtime/frankenphp-symfony composer package.
-  # Auto-enabled by 'frankendeploy init' when the package is detected.
+  # Requires symfony/runtime >= 7.4 (native worker runner) or the
+  # runtime/frankenphp-symfony composer package.
+  # Auto-enabled by 'frankendeploy init' when either is detected.
   worker: true
 
 # Database Configuration (optional)
@@ -186,10 +187,11 @@ frankenphp:
 
 Requirements and constraints:
 
-- The `runtime/frankenphp-symfony` composer package must be installed (`composer require runtime/frankenphp-symfony`). `frankendeploy build` fails with a clear message if it is missing.
+- A FrankenPHP worker runtime must be installed: `symfony/runtime` >= 7.4 ships the worker runner natively (nothing to add on a recent Symfony), older apps can use the `runtime/frankenphp-symfony` package. `frankendeploy build` fails with a clear message if neither is present.
+- The generated Caddyfile only forces `APP_RUNTIME` for `runtime/frankenphp-symfony`; with the native runtime, Symfony selects the worker runner itself.
 - **The application must be stateless**: any static property or service state survives between requests. Symfony services are reset automatically, but hand-written static caches are not.
 - Memory leaks surface as automatic worker restarts (FrankenPHP restarts workers hitting their memory limit).
-- `frankendeploy init` enables it automatically (with a warning) when the package is detected. Opt out with `worker: false`.
+- `frankendeploy init` enables it automatically (with a warning) when a worker runtime is detected. Opt out with `worker: false`.
 - Worker mode applies to **production only** — the dev environment keeps classic mode for easier debugging.
 
 When enabled, `frankendeploy build` generates a `Caddyfile` at the project root that is baked into the production image.

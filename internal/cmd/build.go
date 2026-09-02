@@ -46,8 +46,8 @@ func runBuild(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("configuration validation failed: %w", errors)
 	}
 
-	// Worker mode requires the FrankenPHP Symfony runtime: without it the
-	// container would crash-loop at boot (APP_RUNTIME points to a missing class)
+	// Worker mode requires a FrankenPHP worker runtime: without one the
+	// container would crash-loop at boot (no runner handles the worker loop)
 	if cfg.FrankenPHP.Worker {
 		if err := checkWorkerRuntime(); err != nil {
 			return err
@@ -105,16 +105,18 @@ func runBuild(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// checkWorkerRuntime verifies that runtime/frankenphp-symfony is present in
-// composer.json before generating worker-mode artifacts.
+// checkWorkerRuntime verifies that composer.json ships a FrankenPHP worker
+// runtime (symfony/runtime >= 7.4, or runtime/frankenphp-symfony) before
+// generating worker-mode artifacts.
 func checkWorkerRuntime() error {
 	comp, err := scanner.New(".").ParseComposer()
 	if err != nil {
 		return fmt.Errorf("frankenphp.worker is enabled but composer.json cannot be read: %w", err)
 	}
-	if !comp.HasPackage("runtime/frankenphp-symfony") {
-		return fmt.Errorf("frankenphp.worker is enabled but runtime/frankenphp-symfony is missing from composer.json.\n" +
-			"Install it with: composer require runtime/frankenphp-symfony\n" +
+	if !comp.HasFrankenPHPWorkerRuntime() {
+		return fmt.Errorf("frankenphp.worker is enabled but composer.json has no FrankenPHP worker runtime: " +
+			"symfony/runtime >= 7.4 (ships the worker runner natively) or runtime/frankenphp-symfony is required.\n" +
+			"Upgrade with: composer require symfony/runtime:^7.4\n" +
 			"Or disable worker mode: set frankenphp.worker: false in frankendeploy.yaml")
 	}
 	return nil

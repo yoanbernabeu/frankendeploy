@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **FrankenPHP worker mode works with the native Symfony runtime**: `symfony/runtime` >= 7.4 ships the worker runner itself, so `init` auto-enables worker mode on it, `build` no longer demands `runtime/frankenphp-symfony`, and the generated Caddyfile only forces `APP_RUNTIME` for the legacy package (with the native runtime that override pointed to a missing class) - @yoanbernabeu
+
 ## [0.13.0] - 2026-08-28
 
 This release closes the full production-readiness audit (24/24 issues): FrankenPHP worker mode, a `doctor` preflight command, pure-Go SFTP transfers, and a deployment pipeline whose failure paths are actually tested. Every change was validated live on a real VPS, including the rollback path (deliberately broken health check → previous version kept serving).

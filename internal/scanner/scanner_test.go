@@ -251,6 +251,87 @@ func TestScan_FrankenPHPRuntime_EnablesWorker(t *testing.T) {
 	}
 }
 
+func TestScan_NativeSymfonyRuntime_EnablesWorker(t *testing.T) {
+	tempDir := t.TempDir()
+	composer := `{
+		"require": {
+			"php": ">=8.4",
+			"symfony/framework-bundle": "8.1.*",
+			"symfony/runtime": "8.1.*"
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(tempDir, "composer.json"), []byte(composer), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(tempDir)
+	result, err := s.Scan()
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if !result.HasFrankenPHPRuntime {
+		t.Error("expected HasFrankenPHPRuntime to be true with symfony/runtime >= 7.4")
+	}
+	if !s.ToProjectConfig(result, "myapp").FrankenPHP.Worker {
+		t.Error("expected FrankenPHP.Worker to be enabled with symfony/runtime >= 7.4")
+	}
+
+	foundWarning := false
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "symfony/runtime >= 7.4 detected") {
+			foundWarning = true
+		}
+	}
+	if !foundWarning {
+		t.Errorf("expected a warning naming symfony/runtime, got: %v", result.Warnings)
+	}
+}
+
+func TestScan_OldSymfonyRuntime_WorkerDisabled(t *testing.T) {
+	tempDir := t.TempDir()
+	composer := `{
+		"require": {
+			"php": ">=8.2",
+			"symfony/framework-bundle": "^7.3",
+			"symfony/runtime": "^7.3"
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(tempDir, "composer.json"), []byte(composer), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(tempDir)
+	result, err := s.Scan()
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if result.HasFrankenPHPRuntime {
+		t.Error("expected HasFrankenPHPRuntime to be false with symfony/runtime < 7.4")
+	}
+}
+
+func TestConstraintAtLeast(t *testing.T) {
+	cases := []struct {
+		constraint string
+		want       bool
+	}{
+		{"^7.4", true},
+		{"7.4.*", true},
+		{"8.1.*", true},
+		{">=7.4 <9.0", true},
+		{"^7.3", false},
+		{"6.4.*", false},
+		{"*", false},
+		{"dev-main", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := constraintAtLeast(c.constraint, 7, 4); got != c.want {
+			t.Errorf("constraintAtLeast(%q, 7, 4) = %v, want %v", c.constraint, got, c.want)
+		}
+	}
+}
+
 func TestScan_NoFrankenPHPRuntime_WorkerDisabled(t *testing.T) {
 	tempDir := t.TempDir()
 	composer := `{

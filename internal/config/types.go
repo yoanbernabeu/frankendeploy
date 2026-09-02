@@ -19,8 +19,9 @@ type ProjectConfig struct {
 type FrankenPHPConfig struct {
 	// Worker enables FrankenPHP worker mode in production: the Symfony
 	// kernel is booted once and kept in memory between requests.
-	// Requires the runtime/frankenphp-symfony composer package and a
-	// stateless application (no static state shared between requests).
+	// Requires symfony/runtime >= 7.4 (native worker runner) or the
+	// runtime/frankenphp-symfony package, and a stateless application
+	// (no static state shared between requests).
 	Worker bool `yaml:"worker,omitempty"`
 }
 
@@ -181,8 +182,8 @@ type ScanResult struct {
 	HasMessenger   bool
 	HasMailer      bool
 	HasAPIPlatform bool
-	// HasFrankenPHPRuntime is true when runtime/frankenphp-symfony is in
-	// composer.json, making the app eligible for FrankenPHP worker mode.
+	// HasFrankenPHPRuntime is true when the app can boot in FrankenPHP
+	// worker mode: symfony/runtime >= 7.4 or runtime/frankenphp-symfony.
 	HasFrankenPHPRuntime bool
 	// HasScheduler is true when symfony/scheduler is installed: its
 	// scheduler_* transports must be consumed or scheduled tasks

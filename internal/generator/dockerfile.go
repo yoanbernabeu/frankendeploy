@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -77,6 +78,24 @@ func hasPreloadFile() bool {
 	return err == nil && !info.IsDir()
 }
 
+// hasLegacyFrankenPHPRuntime reports whether composer.json (in the current
+// directory, like hasPreloadFile) requires runtime/frankenphp-symfony, the
+// only runtime that needs the APP_RUNTIME override in the worker Caddyfile.
+func hasLegacyFrankenPHPRuntime() bool {
+	data, err := os.ReadFile("composer.json")
+	if err != nil {
+		return false
+	}
+	var composer struct {
+		Require map[string]string `json:"require"`
+	}
+	if err := json.Unmarshal(data, &composer); err != nil {
+		return false
+	}
+	_, ok := composer.Require["runtime/frankenphp-symfony"]
+	return ok
+}
+
 // WriteDockerfile writes the Dockerfile to the specified path
 func (g *DockerfileGenerator) WriteDockerfile(path string) error {
 	if path == "" {
@@ -121,12 +140,20 @@ func (g *DockerfileGenerator) WriteDockerignore(path string) error {
 // CaddyfileData holds data for the app Caddyfile template (worker mode).
 type CaddyfileData struct {
 	Name string
+	// LegacyRuntime is true when the app relies on runtime/frankenphp-symfony,
+	// whose Runtime class must be forced through APP_RUNTIME. With
+	// symfony/runtime >= 7.4 the worker runner is picked automatically and the
+	// override would point to a class that does not exist.
+	LegacyRuntime bool
 }
 
 // GenerateCaddyfile generates the app-level Caddyfile enabling FrankenPHP
 // worker mode. Only relevant when config frankenphp.worker is true.
 func (g *DockerfileGenerator) GenerateCaddyfile() (string, error) {
-	return g.loader.Execute("caddyfile.tmpl", CaddyfileData{Name: g.config.Name})
+	return g.loader.Execute("caddyfile.tmpl", CaddyfileData{
+		Name:          g.config.Name,
+		LegacyRuntime: hasLegacyFrankenPHPRuntime(),
+	})
 }
 
 // WriteCaddyfile writes the app Caddyfile to the specified path.
