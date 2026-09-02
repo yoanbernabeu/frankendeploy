@@ -55,8 +55,12 @@ func TestGenerateAppConfig_NoActiveHealthCheck(t *testing.T) {
 			t.Errorf("generated config must not contain %q:\n%s", forbidden, out)
 		}
 	}
-	if !strings.Contains(out, "reverse_proxy myapp:8080\n") {
-		t.Errorf("expected a bare reverse_proxy directive:\n%s", out)
+	// Per-request timeouts replace the probe: a frozen container must end in
+	// a 504 for the affected request, never in an endless wait.
+	for _, want := range []string{"reverse_proxy myapp:8080 {", "transport http {", "dial_timeout 5s", "response_header_timeout 60s"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("generated config missing %q:\n%s", want, out)
+		}
 	}
 }
 

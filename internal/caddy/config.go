@@ -35,7 +35,16 @@ func (g *ConfigGenerator) GenerateAppConfig(app AppConfig) (string, error) {
     # slow application into a 503 for everyone ("no upstreams available").
     # The health check that protects production is the one run on the new
     # container before traffic is switched to it.
-    reverse_proxy {{ .Name }}:{{ .Port }}
+    #
+    # Per-request timeouts instead: a container that accepts connections but
+    # never answers costs each visitor at most 60s and a 504, not an endless
+    # wait, and the other requests keep flowing.
+    reverse_proxy {{ .Name }}:{{ .Port }} {
+        transport http {
+            dial_timeout 5s
+            response_header_timeout 60s
+        }
+    }
 
     encode zstd gzip
 
