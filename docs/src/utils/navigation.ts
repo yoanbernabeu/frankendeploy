@@ -15,8 +15,10 @@ export const navigation: NavSection[] = [
     title: 'Getting Started',
     items: [
       { label: 'Introduction', href: '/frankendeploy/getting-started/', order: 1 },
-      { label: 'Installation', href: '/frankendeploy/installation/', order: 2 },
-      { label: 'Quick Start', href: '/frankendeploy/quickstart/', order: 3 },
+      { label: 'Before You Start', href: '/frankendeploy/before-you-start/', order: 2 },
+      { label: 'Installation', href: '/frankendeploy/installation/', order: 3 },
+      { label: 'Your First Deployment', href: '/frankendeploy/first-deployment/', order: 4 },
+      { label: 'Quick Start', href: '/frankendeploy/quickstart/', order: 5 },
     ],
   },
   {
@@ -29,13 +31,16 @@ export const navigation: NavSection[] = [
       { label: 'Environment Variables', href: '/frankendeploy/guides/environment-variables/', order: 5 },
       { label: 'Deployment', href: '/frankendeploy/guides/deployment/', order: 6 },
       { label: 'Rollback', href: '/frankendeploy/guides/rollback/', order: 7 },
+      { label: 'Troubleshooting', href: '/frankendeploy/guides/troubleshooting/', order: 8 },
+      { label: 'FAQ', href: '/frankendeploy/guides/faq/', order: 9 },
     ],
   },
   {
-    title: 'Configuration',
+    title: 'Reference',
     items: [
       { label: 'frankendeploy.yaml', href: '/frankendeploy/config/project/', order: 1 },
       { label: 'Global Config', href: '/frankendeploy/config/global/', order: 2 },
+      { label: 'Glossary', href: '/frankendeploy/glossary/', order: 3 },
     ],
   },
   {
