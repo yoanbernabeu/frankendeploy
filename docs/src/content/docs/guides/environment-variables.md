@@ -17,6 +17,7 @@ Commands are run from the project directory: the application is the one in `fran
 | `APP_DEBUG` | `0` |
 | `SERVER_NAME` | `:8080` (the port Caddy proxies to) |
 | `DATABASE_URL` | Generated and injected with a managed database (`database.managed: true`). With an external database, set it yourself |
+| `SYMFONY_TRUSTED_PROXIES`, `TRUSTED_PROXIES` | Private subnets, so Symfony trusts Caddy's `X-Forwarded-*` headers (real client IP, HTTPS). Not injected when you define either one yourself. See [Behind the Proxy](/frankendeploy/guides/deployment/#behind-the-proxy) |
 
 The `env.prod` section of `frankendeploy.yaml` is **not** applied in production: it only feeds the generated `compose.prod.yaml`. Everything the app needs at runtime goes through the commands below.
 

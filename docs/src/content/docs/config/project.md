@@ -295,7 +295,7 @@ Commands run inside the container with `docker exec`: Symfony console, Composer,
 
 `env.dev` is written into the generated `compose.yaml`; `env.prod` into `compose.prod.yaml`, a template for people who deploy with Compose by hand.
 
-**`frankendeploy deploy` does not read `env.prod`.** In production, the container gets `SERVER_NAME`, `APP_ENV=prod`, `APP_DEBUG=0` and the managed `DATABASE_URL` from FrankenDeploy, and everything else from the `.env.local` on the server, managed with [`frankendeploy env`](/frankendeploy/guides/environment-variables/). Secrets never belong in `frankendeploy.yaml`, which is versioned.
+**`frankendeploy deploy` does not read `env.prod`.** In production, the container gets `SERVER_NAME`, `APP_ENV=prod`, `APP_DEBUG=0`, the managed `DATABASE_URL` and the trusted proxies (`SYMFONY_TRUSTED_PROXIES`, `TRUSTED_PROXIES`) from FrankenDeploy, and everything else from the `.env.local` on the server, managed with [`frankendeploy env`](/frankendeploy/guides/environment-variables/). Secrets never belong in `frankendeploy.yaml`, which is versioned.
 
 ## Validation
 

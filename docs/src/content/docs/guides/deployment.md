@@ -264,6 +264,36 @@ Each application runs on its own Docker network, `frankendeploy-<app>`, with its
 
 The network is created by the first deploy. An application deployed before per-app networks existed (FrankenDeploy < 0.15) is migrated transparently on its next deploy: the database container joins the app network, the new app container starts on it, and once the old container is stopped the database leaves the shared network. Every step checks the current state before acting, so a deploy interrupted in the middle completes on the next run. `frankendeploy doctor` reports the isolation status of the app.
 
+## Behind the Proxy
+
+Requests reach your application through Caddy: Internet → Caddy (80/443, TLS) → app container (`:8080`, plain HTTP on the private app network). Caddy forwards the real client IP and the original scheme in `X-Forwarded-For` and `X-Forwarded-Proto`, but Symfony only honours those headers from proxies it trusts. Otherwise it believes it serves plain HTTP to Caddy's IP: absolute URLs come out in `http://`, session cookies lack the `Secure` flag, rate limiters and logs see the proxy instead of the visitor.
+
+FrankenDeploy handles it: every app container receives
+
+```
+SYMFONY_TRUSTED_PROXIES=127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+TRUSTED_PROXIES=127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+```
+
+- **Symfony >= 7.2** reads `SYMFONY_TRUSTED_PROXIES` natively: nothing to configure in the application.
+- **Older Symfony** applications need the classic wiring in `config/packages/framework.yaml`:
+  ```yaml
+  framework:
+      trusted_proxies: '%env(TRUSTED_PROXIES)%'
+      trusted_headers: ['x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-port', 'x-forwarded-prefix']
+  ```
+
+Trusting the private subnets is safe here: since each app runs on its own Docker network, Caddy is the only thing that can reach the container, so the only proxy Symfony trusts is the one FrankenDeploy put in front of it.
+
+To use other values, define `SYMFONY_TRUSTED_PROXIES` or `TRUSTED_PROXIES` yourself with `frankendeploy env set`: when either is present in the server's `.env.local`, FrankenDeploy injects nothing (a `docker run -e` value would otherwise override yours). `SYMFONY_TRUSTED_HOSTS` is not needed: Caddy only routes the configured domain to the container.
+
+To check what Symfony sees, look at an absolute URL it generates. With API Platform:
+
+```bash
+curl -sI https://my-app.com/api | grep -i link
+# link: <https://my-app.com/api/docs.jsonld>; rel="..."   ← https, the scheme is trusted
+```
+
 ## Managed Database
 
 With `database.managed: true` (the default for PostgreSQL, MySQL and MariaDB), the first deploy creates the `<app>-db` container with random credentials and a persistent volume, and every deploy makes sure it runs and injects `DATABASE_URL` into the app. Credentials are saved on the server (`shared/.db_credentials`, permissions `600`) and reused: you never set `DATABASE_URL` yourself, and the database survives deploys, rollbacks and reboots.
