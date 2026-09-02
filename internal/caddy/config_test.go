@@ -35,27 +35,12 @@ func TestGenerateAppConfig_DoesNotEmitTLSInternal(t *testing.T) {
 	}
 }
 
-// TestGenerateAppConfig_UsesConfiguredHealthPath guards against the live 503
-// found in production: Caddy's active health check probed a hardcoded "/",
-// got 404 from an API-only app, marked the upstream unhealthy, and every
-// request failed with "no upstreams available".
-func TestGenerateAppConfig_UsesConfiguredHealthPath(t *testing.T) {
-	gen := NewConfigGenerator()
-	out, err := gen.GenerateAppConfig(AppConfig{
-		Name:       "myapp",
-		Domain:     "example.com",
-		Port:       8080,
-		HealthPath: "/api",
-	})
-	if err != nil {
-		t.Fatalf("GenerateAppConfig: %v", err)
-	}
-	if !strings.Contains(out, "health_uri /api") {
-		t.Errorf("expected 'health_uri /api' in generated config:\n%s", out)
-	}
-}
-
-func TestGenerateAppConfig_DefaultsHealthPathToRoot(t *testing.T) {
+// TestGenerateAppConfig_NoActiveHealthCheck guards against reintroducing
+// Caddy's active health check. With a single upstream it cannot route around
+// anything, and it has caused two production outages: a probe on "/" getting
+// 404 from an API-only app, then a probe timing out under load, both turning
+// every request into a 503 "no upstreams available".
+func TestGenerateAppConfig_NoActiveHealthCheck(t *testing.T) {
 	gen := NewConfigGenerator()
 	out, err := gen.GenerateAppConfig(AppConfig{
 		Name:   "myapp",
@@ -65,33 +50,22 @@ func TestGenerateAppConfig_DefaultsHealthPathToRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateAppConfig: %v", err)
 	}
-	if !strings.Contains(out, "health_uri /") {
-		t.Errorf("expected 'health_uri /' as default:\n%s", out)
-	}
-}
-
-func TestGenerateAppConfig_RejectsInvalidHealthPath(t *testing.T) {
-	gen := NewConfigGenerator()
-	for _, path := range []string{"no-leading-slash", "/api\nmalicious {", "/api/../../etc"} {
-		_, err := gen.GenerateAppConfig(AppConfig{
-			Name:       "myapp",
-			Domain:     "example.com",
-			Port:       8080,
-			HealthPath: path,
-		})
-		if err == nil {
-			t.Errorf("expected error for invalid health path %q", path)
+	for _, forbidden := range []string{"health_uri", "health_interval", "health_timeout"} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("generated config must not contain %q:\n%s", forbidden, out)
 		}
 	}
+	if !strings.Contains(out, "reverse_proxy myapp:8080\n") {
+		t.Errorf("expected a bare reverse_proxy directive:\n%s", out)
+	}
 }
 
-func TestAppConfigFromProject_CopiesHealthcheckPath(t *testing.T) {
+func TestAppConfigFromProject(t *testing.T) {
 	cfg := &config.ProjectConfig{Name: "myapp"}
-	cfg.Deploy.HealthcheckPath = "/api"
 
 	app := AppConfigFromProject(cfg, "example.com")
-	if app.HealthPath != "/api" {
-		t.Errorf("expected HealthPath /api, got %q", app.HealthPath)
+	if app.Name != "myapp" || app.Domain != "example.com" || app.Port == 0 {
+		t.Errorf("unexpected AppConfig: %+v", app)
 	}
 }
 
