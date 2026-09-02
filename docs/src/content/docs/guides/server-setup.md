@@ -265,36 +265,9 @@ When you deploy an app, FrankenDeploy:
 
 This ensures **zero downtime** for existing apps during deployments.
 
-## Security Model
+## Security
 
-What FrankenDeploy does on the server, and what it deliberately leaves to you.
-
-### What `server setup` does
-
-- **UFW firewall**: only SSH (your actual SSH ports, not just 22), 80 and 443 are open; everything else is denied
-- **Fail2ban** on SSH: 5 failed attempts, 1 hour ban
-- **Caddy** is the only container with published ports. Its admin API listens on `localhost` inside the container and is never exposed
-
-### What every deploy does
-
-- The application runs as a **non-root user** on an unprivileged port (8080)
-- **No port is published** for the app, the worker or the database: the only way in is Caddy, on 80 and 443
-- **TLS** with automatic Let's Encrypt certificates, HSTS enabled; Symfony trusts only Caddy as a proxy (`SYMFONY_TRUSTED_PROXIES` set to the private subnets), so it sees the real client IP and the HTTPS scheme
-- **One Docker network per application**: apps sharing a VPS cannot reach each other's containers
-- **Secrets** live in `.env.local` on the server, `chmod 600`, mounted read-only; `env set --from-stdin` keeps them out of your shell history
-- **Managed databases** get random credentials, a random one-time root password (MySQL/MariaDB), and a dump before every migration
-- **Log rotation** on every container, so logs cannot fill the disk
-
-### What it does not do
-
-FrankenDeploy prepares a server; it is not a hardening tool.
-
-- **No automatic security updates**: install `unattended-upgrades` or update the system yourself
-- **No `sshd` hardening**: password authentication and root login stay as your distribution ships them. Disable password authentication once your key works
-- **No encryption of secrets at rest**: `.env.local` is readable by root and by anyone with SSH access. Use your provider's disk encryption for backups and snapshots
-- **No intrusion detection, no container hardening beyond non-root**
-
-A `server harden` command covering updates, `sshd` and an audit in `doctor` is [being discussed](https://github.com/yoanbernabeu/frankendeploy/issues/95).
+`server setup` installs a firewall, Fail2ban and a reverse proxy that is the only thing listening on the Internet; every deploy runs the app as non-root, publishes no port, and isolates each app on its own network. What is protected, how, and what deliberately stays your job (system updates, `sshd` hardening, off-site backups) is laid out in the [Security Model](/frankendeploy/security/).
 
 ## Multiple Environments
 

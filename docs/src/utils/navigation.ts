@@ -40,7 +40,11 @@ export const navigation: NavSection[] = [
     items: [
       { label: 'frankendeploy.yaml', href: '/frankendeploy/config/project/', order: 1 },
       { label: 'Global Config', href: '/frankendeploy/config/global/', order: 2 },
-      { label: 'Glossary', href: '/frankendeploy/glossary/', order: 3 },
+      { label: 'Under the Hood', href: '/frankendeploy/under-the-hood/', order: 3 },
+      { label: 'Security Model', href: '/frankendeploy/security/', order: 4 },
+      { label: 'Limits & Non-Goals', href: '/frankendeploy/limits/', order: 5 },
+      { label: 'Upgrading', href: '/frankendeploy/upgrading/', order: 6 },
+      { label: 'Glossary', href: '/frankendeploy/glossary/', order: 7 },
     ],
   },
   {
