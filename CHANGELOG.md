@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-02
+
+FrankenPHP worker mode no longer depends on the deprecated `runtime/frankenphp-symfony` package: any Symfony 7.4+ app is eligible out of the box, and the generated Caddyfile no longer forces a runtime class that would not exist. Found and validated live while preparing a Symfony 8.1 / API Platform 4 demo for API Platform Con 2026: on a 2 vCPU VPS the same load test went from 23 to 53 requests per second served, p95 from 5.5 s to 0.83 s.
+
 ### Changed
 
 - **FrankenPHP worker mode works with the native Symfony runtime**: `symfony/runtime` >= 7.4 ships the worker runner itself, so `init` auto-enables worker mode on it, `build` no longer demands `runtime/frankenphp-symfony`, and the generated Caddyfile only forces `APP_RUNTIME` for the legacy package (with the native runtime that override pointed to a missing class) - @yoanbernabeu
