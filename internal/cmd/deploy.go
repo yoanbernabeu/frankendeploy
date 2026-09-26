@@ -184,12 +184,17 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 	// Blue-green deployment: start new container with temp name, health check, then swap
 	state := deploy.NewDeployState(projectCfg.Name)
+	sharedSeeds, modifiedShared := seedableSharedFiles(ctx, ".", projectCfg.Deploy.EffectiveSharedDirs())
 
 	// Steps 4-11: blue-green orchestration (extracted to internal/deploy,
 	// tested per failure scenario in orchestrator_test.go)
 	steps := deploy.Steps{
 		PrepareRelease: func() error {
-			return prepareRelease(ctx, client, projectCfg, remoteAppPath, deployTag)
+			if err := prepareRelease(ctx, client, projectCfg, remoteAppPath, deployTag); err != nil {
+				return err
+			}
+			seedSharedDirs(ctx, client, imageName, remoteAppPath+"/shared", sharedSeeds, modifiedShared)
+			return nil
 		},
 		OldContainerExists: func() bool {
 			if oldResult, err := client.Exec(ctx, fmt.Sprintf("docker ps -q -f name=^%s$", projectCfg.Name)); err == nil && oldResult != nil {
@@ -314,7 +319,10 @@ func buildDockerImage(imageName, platform string) error {
 }
 
 // sourceCodeExcludes lists what never belongs in the remote build context.
-var sourceCodeExcludes = []string{".git", "node_modules", "vendor", "var", ".env.local"}
+// In a Git repository the file list comes from Git (see sourceFiles) and
+// these still apply on top; outside Git they are the only filter.
+var sourceCodeExcludes = []string{".git", "node_modules", "vendor", "var", ".env.local",
+	"config/secrets/prod/prod.decrypt.private.php"}
 
 // transferImage uploads the locally built image over the existing SSH
 // connection (pure-Go SFTP: no scp binary, no second SSH handshake, works on
@@ -399,8 +407,17 @@ func transferSourceCode(ctx context.Context, client *ssh.Client, appName, appPat
 		return fmt.Errorf("failed to create build directory: %w", err)
 	}
 
+	// Only what Git ships: files ignored by .gitignore (local .env files,
+	// the secrets decryption key, a local database, dumps) stay on the
+	// developer's machine
+	files := sourceFiles(ctx, ".")
+	if files != nil {
+		PrintVerbose("Source files listed by Git (.gitignore respected)")
+	}
+
 	count, err := client.UploadDir(ctx, ".", buildPath, ssh.UploadDirOptions{
 		Exclude: sourceCodeExcludes,
+		Files:   files,
 		Progress: func(uploaded int, currentFile string) {
 			PrintVerbose("  %s", currentFile)
 		},

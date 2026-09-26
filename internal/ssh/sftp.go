@@ -54,6 +54,10 @@ type UploadDirOptions struct {
 	// Exclude lists path prefixes (relative to the source dir, slash
 	// separated) that are skipped entirely.
 	Exclude []string
+	// Files, when non-nil, restricts the upload to these paths (relative to
+	// the source dir, slash separated) instead of walking the whole tree.
+	// Exclude still applies.
+	Files []string
 	// Progress is called after each uploaded file with the running count.
 	Progress func(uploaded int, currentFile string)
 }
@@ -69,6 +73,34 @@ func (c *Client) UploadDir(ctx context.Context, localDir, remoteDir string, opts
 	defer sftpClient.Close()
 
 	uploaded := 0
+	if opts.Files != nil {
+		for _, relSlash := range opts.Files {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return uploaded, ctxErr
+			}
+			if isExcluded(relSlash, opts.Exclude) {
+				continue
+			}
+			p := filepath.Join(localDir, filepath.FromSlash(relSlash))
+			info, err := os.Lstat(p)
+			if err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			remotePath := path.Join(remoteDir, relSlash)
+			if err := sftpClient.MkdirAll(path.Dir(remotePath)); err != nil {
+				return uploaded, fmt.Errorf("failed to create remote dir %s: %w", path.Dir(remotePath), err)
+			}
+			if err := uploadRegularFile(sftpClient, p, remotePath, relSlash, info); err != nil {
+				return uploaded, err
+			}
+			uploaded++
+			if opts.Progress != nil {
+				opts.Progress(uploaded, relSlash)
+			}
+		}
+		return uploaded, nil
+	}
+
 	err = filepath.Walk(localDir, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -107,27 +139,8 @@ func (c *Client) UploadDir(ctx context.Context, localDir, remoteDir string, opts
 			return nil
 		}
 
-		local, err := os.Open(p)
-		if err != nil {
-			return fmt.Errorf("failed to open %s: %w", p, err)
-		}
-		remote, err := sftpClient.Create(remotePath)
-		if err != nil {
-			local.Close()
-			return fmt.Errorf("failed to create remote file %s: %w", remotePath, err)
-		}
-		_, copyErr := io.Copy(remote, local)
-		closeErr := remote.Close()
-		local.Close()
-		if copyErr != nil {
-			return fmt.Errorf("upload of %s failed: %w", relSlash, copyErr)
-		}
-		if closeErr != nil {
-			return fmt.Errorf("upload of %s failed: %w", relSlash, closeErr)
-		}
-		// Preserve permission bits (bin/console must stay executable)
-		if err := sftpClient.Chmod(remotePath, info.Mode().Perm()); err != nil {
-			return fmt.Errorf("failed to chmod %s: %w", remotePath, err)
+		if err := uploadRegularFile(sftpClient, p, remotePath, relSlash, info); err != nil {
+			return err
 		}
 
 		uploaded++
@@ -140,6 +153,32 @@ func (c *Client) UploadDir(ctx context.Context, localDir, remoteDir string, opts
 		return uploaded, err
 	}
 	return uploaded, nil
+}
+
+// uploadRegularFile copies one local file to remotePath, preserving its
+// permission bits (bin/console must stay executable).
+func uploadRegularFile(sftpClient *sftp.Client, localPath, remotePath, relSlash string, info os.FileInfo) error {
+	local, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("failed to open %s: %w", localPath, err)
+	}
+	defer local.Close()
+	remote, err := sftpClient.Create(remotePath)
+	if err != nil {
+		return fmt.Errorf("failed to create remote file %s: %w", remotePath, err)
+	}
+	_, copyErr := io.Copy(remote, local)
+	closeErr := remote.Close()
+	if copyErr != nil {
+		return fmt.Errorf("upload of %s failed: %w", relSlash, copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("upload of %s failed: %w", relSlash, closeErr)
+	}
+	if err := sftpClient.Chmod(remotePath, info.Mode().Perm()); err != nil {
+		return fmt.Errorf("failed to chmod %s: %w", remotePath, err)
+	}
+	return nil
 }
 
 // isExcluded reports whether a slash-separated relative path matches an

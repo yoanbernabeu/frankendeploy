@@ -101,6 +101,10 @@ openssl rand -hex 32 | frankendeploy env set prod APP_SECRET --from-stdin
 
 The server cannot download from inside containers, almost always a network MTU below 1500. `frankendeploy doctor <name>` confirms it with the `Network MTU` check; see [the fix above](#-network-mtu--server-interface-is-1400-but-docker0-builds-uses-1500).
 
+### The deploy succeeded but pages using the database fail with `no such table`
+
+With SQLite, the database file lives in a shared directory (`data/` for instance), which hides the one in the image. Since 0.16.4 an empty shared directory is filled with the committed files on the first deploy. A server deployed with an earlier version may hold an empty database file instead: if it has no data worth keeping, remove it (`rm /opt/frankendeploy/apps/<app>/shared/data/*` on the server) and deploy again. The health check only calls `deploy.healthcheck_path`: point it to a page that queries the database to catch this at deploy time.
+
 ### `Architecture mismatch: local arm64 → server x86_64`
 
 You build on an Apple Silicon Mac for an Intel/AMD server; the image would not run there. In interactive mode FrankenDeploy offers to build on the server and remembers the choice. In CI (`--yes`), say it explicitly once:

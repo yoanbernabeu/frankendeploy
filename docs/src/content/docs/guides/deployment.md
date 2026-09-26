@@ -61,7 +61,7 @@ frankendeploy deploy prod --remote-build
 ```
 
 How it works:
-1. The source code is transferred over the existing SSH connection (pure-Go SFTP: no rsync or scp needed, works on Windows; `.git`, `node_modules`, `vendor`, `var` and `.env.local` are excluded)
+1. The source code is transferred over the existing SSH connection (pure-Go SFTP: no rsync or scp needed, works on Windows). In a Git repository, only what Git considers part of the project is sent: committed files and new files not ignored by `.gitignore`. Your local `.env.*.local` files, the secrets decryption key, a local database or a dump stay on your machine. The Docker files FrankenDeploy generates and `public/bundles` are always sent. Outside Git, everything is sent except `.git`, `node_modules`, `vendor`, `var`, `.env.local` and the prod decryption key
 2. The image is built on the VPS, with Docker's layer cache, so the second build is much faster than the first
 3. The deploy continues normally
 
