@@ -2,11 +2,14 @@ package ssh
 
 import (
 	"bufio"
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -70,44 +73,114 @@ func DefaultHostKeyPrompt(host, keyType, fingerprint string) bool {
 	return answer == "yes" || answer == "y"
 }
 
-// ResolveHostKeyCallback returns the host key verification callback used by
-// every SSH connection (deploy, server add, TryConnect...).
+// ResolveHostKey returns the host key verification callback used by every SSH
+// connection (deploy, server add, TryConnect...), and the host key algorithms
+// to negotiate with addr ("host:port"). A nil algorithm list means the
+// library defaults.
 //
 // Resolution order:
 //  1. FRANKENDEPLOY_KNOWN_HOSTS: known_hosts content for CI/CD (strict, no TOFU)
 //  2. FRANKENDEPLOY_SKIP_HOST_KEY_CHECK=true: skip verification (not recommended)
 //  3. ~/.ssh/known_hosts with trust-on-first-use via prompt
-func ResolveHostKeyCallback(prompt HostKeyPrompt) (ssh.HostKeyCallback, error) {
+func ResolveHostKey(prompt HostKeyPrompt, addr string) (ssh.HostKeyCallback, []string, error) {
 	if content := os.Getenv("FRANKENDEPLOY_KNOWN_HOSTS"); content != "" {
 		tmpFile, err := os.CreateTemp("", "known_hosts")
 		if err != nil {
-			return nil, fmt.Errorf("failed to create temp known_hosts: %w", err)
+			return nil, nil, fmt.Errorf("failed to create temp known_hosts: %w", err)
 		}
 		defer os.Remove(tmpFile.Name())
 
 		if _, err := tmpFile.WriteString(content); err != nil {
 			tmpFile.Close()
-			return nil, fmt.Errorf("failed to write temp known_hosts: %w", err)
+			return nil, nil, fmt.Errorf("failed to write temp known_hosts: %w", err)
 		}
 		tmpFile.Close()
 
 		callback, err := knownhosts.New(tmpFile.Name())
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse FRANKENDEPLOY_KNOWN_HOSTS: %w", err)
+			return nil, nil, fmt.Errorf("failed to parse FRANKENDEPLOY_KNOWN_HOSTS: %w", err)
 		}
-		return callback, nil
+		return callback, preferredHostKeyAlgorithms(callback, addr), nil
 	}
 
 	if os.Getenv("FRANKENDEPLOY_SKIP_HOST_KEY_CHECK") == "true" {
-		return ssh.InsecureIgnoreHostKey(), nil
+		return ssh.InsecureIgnoreHostKey(), nil, nil
 	}
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("cannot determine home directory: %w", err)
+		return nil, nil, fmt.Errorf("cannot determine home directory: %w", err)
 	}
 
-	return knownHostsCallbackWithTOFU(filepath.Join(homeDir, ".ssh", "known_hosts"), prompt)
+	path := filepath.Join(homeDir, ".ssh", "known_hosts")
+	callback, err := knownHostsCallbackWithTOFU(path, prompt)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// The TOFU wrapper would prompt for the probe key: query the plain file.
+	base, err := knownhosts.New(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read known_hosts: %w", err)
+	}
+	return callback, preferredHostKeyAlgorithms(base, addr), nil
+}
+
+// preferredHostKeyAlgorithms returns the host key algorithms to offer to addr:
+// those matching the key types known_hosts already holds for it, then the
+// library defaults. It returns nil when the host is not known yet.
+//
+// Go offers ECDSA before Ed25519, OpenSSH the other way round. A server first
+// reached with ssh(1) only has its Ed25519 key in known_hosts; without this
+// ordering Go negotiates ECDSA and the lookup reports a changed key, a false
+// man-in-the-middle alert. Known types come first but the defaults are kept,
+// so a server that really lost its key still gets HostKeyChangedError.
+func preferredHostKeyAlgorithms(known ssh.HostKeyCallback, addr string) []string {
+	// Probe with a throwaway key: the KeyError lists the recorded keys.
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil
+	}
+	probe, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		return nil
+	}
+
+	// knownhosts checks the hostname first; the remote address only has to
+	// parse, and an empty one never matches a known_hosts entry.
+	var keyErr *knownhosts.KeyError
+	if !errors.As(known(addr, &net.TCPAddr{}, probe), &keyErr) || len(keyErr.Want) == 0 {
+		return nil
+	}
+
+	defaults := ssh.SupportedAlgorithms().HostKeys
+	var preferred []string
+	for _, want := range keyErr.Want {
+		for _, algo := range algorithmsForKeyType(want.Key.Type()) {
+			if slices.Contains(defaults, algo) && !slices.Contains(preferred, algo) {
+				preferred = append(preferred, algo)
+			}
+		}
+	}
+	if len(preferred) == 0 {
+		return nil
+	}
+
+	for _, algo := range defaults {
+		if !slices.Contains(preferred, algo) {
+			preferred = append(preferred, algo)
+		}
+	}
+	return preferred
+}
+
+// algorithmsForKeyType maps a known_hosts key type to the signature
+// algorithms that prove it. An RSA key is negotiated as rsa-sha2-*.
+func algorithmsForKeyType(keyType string) []string {
+	if keyType == ssh.KeyAlgoRSA {
+		return []string{ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256}
+	}
+	return []string{keyType}
 }
 
 // knownHostsCallbackWithTOFU wraps a knownhosts callback with

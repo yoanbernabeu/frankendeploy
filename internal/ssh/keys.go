@@ -186,7 +186,8 @@ func TryConnect(host, user string, port int, keyPath string) error {
 		return err
 	}
 
-	hostKeyCallback, err := ResolveHostKeyCallback(DefaultHostKeyPrompt)
+	addr := fmt.Sprintf("%s:%d", host, port)
+	hostKeyCallback, hostKeyAlgorithms, err := ResolveHostKey(DefaultHostKeyPrompt, addr)
 	if err != nil {
 		return err
 	}
@@ -196,11 +197,11 @@ func TryConnect(host, user string, port int, keyPath string) error {
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(signer),
 		},
-		HostKeyCallback: hostKeyCallback,
-		Timeout:         10 * time.Second,
+		HostKeyCallback:   hostKeyCallback,
+		HostKeyAlgorithms: hostKeyAlgorithms,
+		Timeout:           10 * time.Second,
 	}
 
-	addr := fmt.Sprintf("%s:%d", host, port)
 	client, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
 		return classifyConnError(addr, err)
