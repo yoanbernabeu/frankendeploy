@@ -282,6 +282,8 @@ Number of releases kept on the server for rollback (default 5). The same count d
 
 Paths persisted across releases, stored under `/opt/frankendeploy/apps/<name>/shared/` and mounted into the container. Defaults: `.env.local` (mounted read-only) and `var/log`, `var/sessions`. Add `public/uploads` or any directory that must survive a deploy. Setting either list replaces the default.
 
+A shared directory hides the directory of the same name in the image. So that files shipped with the project are not lost (the Symfony Demo commits its SQLite database in `data/`), the first deploy fills an **empty** shared directory with its files **committed to Git**, copied from the image. Files ignored by Git or modified locally are never copied, and a shared directory that already holds anything is never touched.
+
 ### `deploy.memory_limit` / `deploy.cpu_limit`
 
 Optional caps on the app container (`docker run --memory` / `--cpus`), applied from the next deploy. They protect the VPS from a leaking or runaway application. Log rotation is always on for every container FrankenDeploy starts (`json-file`, 10 MB × 3 files).
