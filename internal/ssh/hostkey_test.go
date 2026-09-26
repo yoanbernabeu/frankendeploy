@@ -1,12 +1,17 @@
 package ssh
 
 import (
+	"crypto"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"errors"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -207,14 +212,14 @@ func TestKnownHostsCallbackWithTOFU_NonStandardPort(t *testing.T) {
 	}
 }
 
-func TestResolveHostKeyCallback_EnvKnownHosts(t *testing.T) {
+func TestResolveHostKey_EnvKnownHosts(t *testing.T) {
 	key := testHostKey(t)
 	line := knownhosts.Line([]string{"example.com:22"}, key)
 	t.Setenv("FRANKENDEPLOY_KNOWN_HOSTS", line+"\n")
 
-	callback, err := ResolveHostKeyCallback(nil)
+	callback, _, err := ResolveHostKey(nil, "example.com:22")
 	if err != nil {
-		t.Fatalf("ResolveHostKeyCallback() error = %v", err)
+		t.Fatalf("ResolveHostKey() error = %v", err)
 	}
 
 	if err := callback("example.com:22", fakeAddr{"192.0.2.1:22"}, key); err != nil {
@@ -228,12 +233,12 @@ func TestResolveHostKeyCallback_EnvKnownHosts(t *testing.T) {
 	}
 }
 
-func TestResolveHostKeyCallback_SkipCheck(t *testing.T) {
+func TestResolveHostKey_SkipCheck(t *testing.T) {
 	t.Setenv("FRANKENDEPLOY_SKIP_HOST_KEY_CHECK", "true")
 
-	callback, err := ResolveHostKeyCallback(nil)
+	callback, _, err := ResolveHostKey(nil, "example.com:22")
 	if err != nil {
-		t.Fatalf("ResolveHostKeyCallback() error = %v", err)
+		t.Fatalf("ResolveHostKey() error = %v", err)
 	}
 
 	if err := callback("anything.com:22", fakeAddr{"192.0.2.1:22"}, testHostKey(t)); err != nil {
@@ -263,3 +268,196 @@ func TestHostKeyUnknownError_Message(t *testing.T) {
 
 // Guard against net import being reported unused if tests change
 var _ net.Addr = fakeAddr{}
+
+// knownHostsWith returns a known_hosts callback holding the given keys for host.
+func knownHostsWith(t *testing.T, host string, keys ...ssh.PublicKey) ssh.HostKeyCallback {
+	t.Helper()
+	var lines []string
+	for _, key := range keys {
+		lines = append(lines, knownhosts.Line([]string{host}, key))
+	}
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
+		t.Fatalf("failed to write known_hosts: %v", err)
+	}
+	callback, err := knownhosts.New(path)
+	if err != nil {
+		t.Fatalf("knownhosts.New() error = %v", err)
+	}
+	return callback
+}
+
+func testSigner(t *testing.T, generate func() (crypto.Signer, error)) ssh.Signer {
+	t.Helper()
+	key, err := generate()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+	signer, err := ssh.NewSignerFromSigner(key)
+	if err != nil {
+		t.Fatalf("failed to create signer: %v", err)
+	}
+	return signer
+}
+
+func ed25519Signer(t *testing.T) ssh.Signer {
+	return testSigner(t, func() (crypto.Signer, error) {
+		_, priv, err := ed25519.GenerateKey(rand.Reader)
+		return priv, err
+	})
+}
+
+func ecdsaSigner(t *testing.T) ssh.Signer {
+	return testSigner(t, func() (crypto.Signer, error) {
+		return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	})
+}
+
+func TestPreferredHostKeyAlgorithms_UnknownHost(t *testing.T) {
+	known := knownHostsWith(t, "other.example.com:22", ed25519Signer(t).PublicKey())
+
+	if algos := preferredHostKeyAlgorithms(known, "example.com:22"); algos != nil {
+		t.Errorf("expected nil for an unknown host, got %v", algos)
+	}
+}
+
+func TestPreferredHostKeyAlgorithms_KnownTypeFirst(t *testing.T) {
+	known := knownHostsWith(t, "example.com:22", ed25519Signer(t).PublicKey())
+
+	algos := preferredHostKeyAlgorithms(known, "example.com:22")
+	if len(algos) == 0 || algos[0] != ssh.KeyAlgoED25519 {
+		t.Fatalf("expected %s first, got %v", ssh.KeyAlgoED25519, algos)
+	}
+	// The defaults stay available so a real key change is still detected.
+	if !slices.Contains(algos, ssh.KeyAlgoECDSA256) {
+		t.Errorf("expected defaults to be kept after the known types, got %v", algos)
+	}
+}
+
+func TestPreferredHostKeyAlgorithms_RSA(t *testing.T) {
+	rsaSigner := testSigner(t, func() (crypto.Signer, error) {
+		return rsa.GenerateKey(rand.Reader, 2048)
+	})
+	known := knownHostsWith(t, "example.com:22", rsaSigner.PublicKey())
+
+	algos := preferredHostKeyAlgorithms(known, "example.com:22")
+	want := []string{ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256}
+	if len(algos) < 2 || !slices.Equal(algos[:2], want) {
+		t.Errorf("expected %v first for an RSA key, got %v", want, algos)
+	}
+	if slices.Contains(algos, ssh.KeyAlgoRSA) {
+		t.Errorf("SHA-1 ssh-rsa must not be offered, got %v", algos)
+	}
+}
+
+func TestPreferredHostKeyAlgorithms_NonStandardPort(t *testing.T) {
+	known := knownHostsWith(t, "gate.example.com:3022", ed25519Signer(t).PublicKey())
+
+	if algos := preferredHostKeyAlgorithms(known, "gate.example.com:3022"); len(algos) == 0 || algos[0] != ssh.KeyAlgoED25519 {
+		t.Errorf("expected %s first on port 3022, got %v", ssh.KeyAlgoED25519, algos)
+	}
+	if algos := preferredHostKeyAlgorithms(known, "gate.example.com:22"); algos != nil {
+		t.Errorf("an entry for port 3022 must not match port 22, got %v", algos)
+	}
+}
+
+// startTestSSHServer serves SSH handshakes on 127.0.0.1 with the given host
+// keys and no client authentication, and returns its address.
+func startTestSSHServer(t *testing.T, hostKeys ...ssh.Signer) string {
+	t.Helper()
+	config := &ssh.ServerConfig{NoClientAuth: true}
+	for _, key := range hostKeys {
+		config.AddHostKey(key)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	t.Cleanup(func() { listener.Close() })
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				_, chans, reqs, err := ssh.NewServerConn(conn, config)
+				if err != nil {
+					return
+				}
+				go ssh.DiscardRequests(reqs)
+				for newChan := range chans {
+					_ = newChan.Reject(ssh.Prohibited, "test server")
+				}
+			}()
+		}
+	}()
+
+	return listener.Addr().String()
+}
+
+// A server first reached with OpenSSH only has its Ed25519 key recorded, while
+// it also serves an ECDSA key. The connection must succeed, not report a
+// changed key.
+func TestResolveHostKey_OnlyEd25519Known(t *testing.T) {
+	edKey := ed25519Signer(t)
+	addr := startTestSSHServer(t, ecdsaSigner(t), edKey)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	line := knownhosts.Line([]string{addr}, edKey.PublicKey())
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "known_hosts"), []byte(line+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	callback, algos, err := ResolveHostKey(nil, addr)
+	if err != nil {
+		t.Fatalf("ResolveHostKey() error = %v", err)
+	}
+
+	// Without the ordering, Go negotiates ECDSA and the key looks changed.
+	_, err = ssh.Dial("tcp", addr, &ssh.ClientConfig{User: "test", HostKeyCallback: callback})
+	var changedErr *HostKeyChangedError
+	if !errors.As(err, &changedErr) {
+		t.Fatalf("expected the default negotiation to hit HostKeyChangedError, got %v", err)
+	}
+
+	client, err := ssh.Dial("tcp", addr, &ssh.ClientConfig{
+		User:              "test",
+		HostKeyCallback:   callback,
+		HostKeyAlgorithms: algos,
+	})
+	if err != nil {
+		t.Fatalf("connection with the known Ed25519 key refused: %v", err)
+	}
+	client.Close()
+}
+
+// A server whose recorded key is gone must still be reported as changed.
+func TestResolveHostKey_RealKeyChangeStillDetected(t *testing.T) {
+	addr := startTestSSHServer(t, ecdsaSigner(t))
+
+	line := knownhosts.Line([]string{addr}, ed25519Signer(t).PublicKey())
+	t.Setenv("FRANKENDEPLOY_KNOWN_HOSTS", line+"\n")
+
+	callback, algos, err := ResolveHostKey(nil, addr)
+	if err != nil {
+		t.Fatalf("ResolveHostKey() error = %v", err)
+	}
+
+	_, err = ssh.Dial("tcp", addr, &ssh.ClientConfig{
+		User:              "test",
+		HostKeyCallback:   callback,
+		HostKeyAlgorithms: algos,
+	})
+	var keyErr *knownhosts.KeyError
+	if !errors.As(err, &keyErr) || len(keyErr.Want) == 0 {
+		t.Fatalf("expected a known_hosts key mismatch, got %v", err)
+	}
+}

@@ -125,16 +125,17 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("failed to load SSH credentials: %w", err)
 	}
 
-	hostKeyCallback, err := ResolveHostKeyCallback(c.opts.hostKeyPrompt)
+	hostKeyCallback, hostKeyAlgorithms, err := ResolveHostKey(c.opts.hostKeyPrompt, fmt.Sprintf("%s:%d", c.Host, c.Port))
 	if err != nil {
 		return fmt.Errorf("host key verification failed: %w", err)
 	}
 
 	c.sshConfig = &ssh.ClientConfig{
-		User:            c.User,
-		Auth:            auths,
-		HostKeyCallback: hostKeyCallback,
-		Timeout:         c.opts.timeout,
+		User:              c.User,
+		Auth:              auths,
+		HostKeyCallback:   hostKeyCallback,
+		HostKeyAlgorithms: hostKeyAlgorithms,
+		Timeout:           c.opts.timeout,
 	}
 
 	return c.connectWithRetry()

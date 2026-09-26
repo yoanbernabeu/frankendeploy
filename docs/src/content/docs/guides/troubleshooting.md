@@ -35,6 +35,8 @@ Normal on the first connection: SSH shows the server's fingerprint and asks you 
 
 The server presents a different key than the one recorded. If you reinstalled or recreated the VPS, that is expected: `ssh-keygen -R 203.0.113.42`, then run the command again and confirm the new fingerprint. If you did not, stop and investigate: someone may be intercepting the connection.
 
+Up to version 0.16.0, this message could also appear by mistake on a server you had first reached with `ssh`: `known_hosts` held its Ed25519 key while FrankenDeploy negotiated its ECDSA key. Upgrade rather than removing the key.
+
 ## Preparing the server
 
 ### `unsupported Linux distribution: ...`
