@@ -77,6 +77,10 @@ Same cause, same fix. `server setup` is safe to run again on a prepared server; 
 
 The A record of the domain does not point to the server yet. Create or fix it at your DNS provider, then wait: propagation takes from minutes to hours. `dig +short my-app.com` shows what the world currently sees. Your own machine may cache an old answer longer than the rest of the Internet; `doctor` resolves from your machine, so a stale cache can make it say no while the record is right.
 
+### `❌ Network MTU — server interface is 1400 but docker0 (builds) uses 1500`
+
+Some VPS have a network interface smaller than the usual 1500 bytes (1460 on Google Cloud, 1450 on many VXLAN-based clouds, 1400 on some Kubernetes-backed VMs), while Docker uses 1500. Small packets pass, large ones are silently dropped: the build hangs on `apt-get update` for minutes, then fails with `Unable to locate package`, and Caddy cannot get a certificate. Run `frankendeploy server setup <name> --email you@example.com` again: it writes `/etc/docker/daemon.json` with the right MTU, restarts Docker and recreates the `frankendeploy` network. If `daemon.json` already existed, setup leaves it untouched and prints the lines to add.
+
 ### `❌ Local Docker — docker CLI not found`
 
 Docker is not installed on your machine. You need it for local builds and the dev environment. If you deploy with `--remote-build` (or `remote_build: true` on the server), the image is built on the server and local Docker is not used; `doctor` still reports the missing CLI.
@@ -92,6 +96,10 @@ openssl rand -hex 32 | frankendeploy env set prod APP_SECRET --from-stdin
 ```
 
 `DATABASE_URL` is required too when `database.managed` is `false` (external database).
+
+### The build hangs on `apt-get update`, then `Unable to locate package ...`
+
+The server cannot download from inside containers, almost always a network MTU below 1500. `frankendeploy doctor <name>` confirms it with the `Network MTU` check; see [the fix above](#-network-mtu--server-interface-is-1400-but-docker0-builds-uses-1500).
 
 ### `Architecture mismatch: local arm64 → server x86_64`
 

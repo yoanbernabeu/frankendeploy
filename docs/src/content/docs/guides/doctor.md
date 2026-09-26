@@ -19,6 +19,7 @@ frankendeploy doctor prod
 **On the server, over SSH**
 - Passwordless `sudo` (unless you connect as root)
 - Docker installed and usable without `sudo`
+- Docker networks not larger than the server's network MTU (see [Troubleshooting](/frankendeploy/guides/troubleshooting/#-network-mtu--server-interface-is-1400-but-docker0-builds-uses-1500))
 - The `frankendeploy` network created by `server setup`
 - The Caddy reverse proxy container running
 - Free disk space (a build or an image transfer needs a few GB)
