@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -123,4 +124,41 @@ func HasMigrationHook(hooks []string) bool {
 		}
 	}
 	return false
+}
+
+// HookError is returned when a deployment hook fails. MigrationAttempted
+// tells whether a migration hook ran before or as the failing one: only then
+// can the schema be partially migrated.
+type HookError struct {
+	Hook               string
+	MigrationAttempted bool
+	Err                error
+}
+
+func (e *HookError) Error() string {
+	return fmt.Sprintf("hook '%s' failed: %v", e.Hook, e.Err)
+}
+
+func (e *HookError) Unwrap() error {
+	return e.Err
+}
+
+// NewHookError builds the error for hooks[failed], computing whether a
+// migration ran up to that point.
+func NewHookError(hooks []string, failed int, err error) *HookError {
+	return &HookError{
+		Hook:               hooks[failed],
+		MigrationAttempted: HasMigrationHook(hooks[:failed+1]),
+		Err:                err,
+	}
+}
+
+// migrationMayHaveRun reports whether a pre_deploy failure may have left a
+// partially migrated schema. Unknown failures are treated as such.
+func migrationMayHaveRun(err error) bool {
+	var hookErr *HookError
+	if errors.As(err, &hookErr) {
+		return hookErr.MigrationAttempted
+	}
+	return true
 }

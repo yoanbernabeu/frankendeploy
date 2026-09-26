@@ -896,7 +896,7 @@ func cleanupOldReleases(ctx context.Context, client ssh.Executor, appPath string
 
 // runDeployHooks executes deployment hooks inside the container
 func runDeployHooks(ctx context.Context, client ssh.Executor, containerName string, hooks []string) error {
-	for _, hook := range hooks {
+	for i, hook := range hooks {
 		// Validate hook command before execution
 		if err := security.ValidateDockerCommand(hook); err != nil {
 			return fmt.Errorf("invalid hook command %q: %w", hook, err)
@@ -909,7 +909,7 @@ func runDeployHooks(ctx context.Context, client ssh.Executor, containerName stri
 			return fmt.Errorf("hook failed: %w", err)
 		}
 		if err := result.Err(); err != nil {
-			return fmt.Errorf("hook '%s' failed: %w", hook, err)
+			return deploy.NewHookError(hooks, i, err)
 		}
 	}
 	return nil

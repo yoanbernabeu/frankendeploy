@@ -64,6 +64,7 @@ func (s *Scanner) Scan() (*config.ScanResult, error) {
 
 	// Detect Symfony components
 	result.HasDoctrine = s.HasDoctrine()
+	result.HasMigrations = composer.HasPackage("doctrine/doctrine-migrations-bundle")
 	result.HasMessenger = s.HasMessenger()
 	result.HasMailer = s.HasMailer()
 	result.HasScheduler = composer.HasPackage("symfony/scheduler")
@@ -335,8 +336,9 @@ func contains(slice []string, value string) bool {
 func (s *Scanner) generateDefaultHooks(result *config.ScanResult) config.Hooks {
 	hooks := config.Hooks{}
 
-	// If Doctrine is detected, add migration hook
-	if result.HasDoctrine {
+	// Doctrine alone is not enough: an app can use the ORM without the
+	// migrations bundle (the Symfony Demo does), and the hook would fail
+	if result.HasDoctrine && result.HasMigrations {
 		hooks.PreDeploy = append(hooks.PreDeploy,
 			"php bin/console doctrine:migrations:migrate --no-interaction --allow-no-migration")
 	}
