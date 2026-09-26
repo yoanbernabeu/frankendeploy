@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-09-26
+
+A false security alert fixed, found while deploying the Symfony Demo on a fresh Ubuntu 24.04 VPS: after testing the connection with `ssh`, as the docs ask, every command refused the server with "host key has changed". The documentation was also reorganized around reading paths.
+
+### Fixed
+
+- **No more false "host key has changed" alert**: Go offers ECDSA before Ed25519 while OpenSSH does the opposite, so on a server first reached with `ssh` (only its Ed25519 key in `known_hosts`) FrankenDeploy negotiated the ECDSA key and reported a changed host key, suggesting `ssh-keygen -R`. The key types already recorded for the host are now offered first, like OpenSSH; a real key change is still detected (#110) - @yoanbernabeu
+
+### Documentation
+
+- **Reading paths**: a beginner path (before you start, first deployment, troubleshooting, FAQ, glossary), an expert path (under the hood, security model, limits, upgrading), task guides (several apps, workers, data and backups, CI/CD), and a navigation in five sections (#103, #104, #105, #106, #107, #108) - @yoanbernabeu
+
 ## [0.16.0] - 2026-09-02
 
 Symfony now sees the real world behind Caddy: the HTTPS scheme and the visitor's IP reach the application without any configuration. Found on a real deployment where API Platform advertised its documentation in `http://` on an `https://` site. The documentation also went through a full review against the code (#100), with a new preflight checks guide and a security model section.
@@ -236,7 +248,8 @@ This release closes every P0 finding from the production-readiness audit. All fi
 
 Initial public release with core deployment features.
 
-[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.14.1...v0.15.0
