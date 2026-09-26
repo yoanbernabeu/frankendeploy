@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.4] - 2026-09-26
+
+The Symfony Demo now deploys end to end with the commands from the docs, blog and database included. Two bugs blocked it: a migration hook generated for an app without the migrations bundle, and a SQLite database hidden by its shared directory while the deploy reported success. The source transfer also stops sending files ignored by Git to the server.
+
+### Security
+
+- **Files ignored by Git no longer leave your machine**: the remote build transfer sent the whole project except `.git`, `node_modules`, `vendor`, `var` and `.env.local`, so `.env.*.local` files, `config/secrets/prod/prod.decrypt.private.php`, a local database or a dump reached the server, and the image unless `.dockerignore` excluded them. In a Git repository, only committed files and new files not ignored by `.gitignore` are sent now, plus the generated Docker files and `public/bundles`/`assets/vendor`. A project that relied on its gitignored decryption key being shipped must set `SYMFONY_DECRYPTION_SECRET` with `frankendeploy env set` (#115) - @yoanbernabeu
+
+### Fixed
+
+- **Files shipped with the project are no longer hidden by shared directories**: a shared directory is mounted over the image's one, so the Symfony Demo's committed SQLite database in `data/` disappeared and the blog answered 500 while the deploy reported success. On deploy, an empty shared directory is now filled with its files committed to Git (never ignored or locally modified ones), copied from the image; a shared directory that holds anything is never touched (#115) - @yoanbernabeu
+- **No migration hook without the migrations bundle**: `init` added `doctrine:migrations:migrate` as soon as Doctrine was configured, and every deploy of an app using the ORM without `doctrine/doctrine-migrations-bundle` failed on it. The rollback's "migration may have been partially applied" warning now only shows when a migration actually ran (#113) - @yoanbernabeu
+- **Stable PHP extension order**: `init` listed extensions in a random order on each run, which also changed a regenerated Dockerfile and invalidated the Docker build cache (#114) - @yoanbernabeu
+
 ## [0.16.3] - 2026-09-26
 
 Deploying to a VPS whose network MTU is below 1500 no longer hangs. Found on the same Symfony Demo deployment: the remote build froze for eight minutes on `apt-get update`, then failed with "Unable to locate package", while `doctor` was all green.
@@ -264,7 +278,8 @@ This release closes every P0 finding from the production-readiness audit. All fi
 
 Initial public release with core deployment features.
 
-[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.3...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.4...HEAD
+[0.16.4]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.3...v0.16.4
 [0.16.3]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.2...v0.16.3
 [0.16.2]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.0...v0.16.1
