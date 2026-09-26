@@ -692,3 +692,32 @@ func TestScanner_NoMigrationHookWithoutMigrationsBundle(t *testing.T) {
 		t.Errorf("expected no pre-deploy hook without doctrine-migrations-bundle, got %v", hooks)
 	}
 }
+
+// Map iteration order is random: the extensions must come out in the same
+// order on every run, or init's output and the Dockerfile keep changing.
+func TestScanner_ExtensionsOrderIsStable(t *testing.T) {
+	dir := t.TempDir()
+	composer := `{"require": {"php": ">=8.4", "symfony/framework-bundle": "^7.4",
+		"ext-ctype": "*", "ext-iconv": "*", "ext-mbstring": "*", "ext-xml": "*", "ext-sodium": "*", "ext-bcmath": "*"}}`
+	if err := os.WriteFile(filepath.Join(dir, "composer.json"), []byte(composer), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var first []string
+	for i := 0; i < 20; i++ {
+		result, err := New(dir).Scan()
+		if err != nil {
+			t.Fatalf("Scan() error = %v", err)
+		}
+		if i == 0 {
+			first = result.PHPExtensions
+			continue
+		}
+		if strings.Join(result.PHPExtensions, ",") != strings.Join(first, ",") {
+			t.Fatalf("extension order changed between runs: %v then %v", first, result.PHPExtensions)
+		}
+	}
+	if !strings.HasPrefix(strings.Join(first, ","), "bcmath,ctype,iconv,mbstring,sodium,xml") {
+		t.Errorf("declared extensions should come sorted, got %v", first)
+	}
+}

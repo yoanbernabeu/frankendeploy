@@ -187,10 +187,10 @@ func (s *Scanner) enhanceExtensions(extensions []string, result *config.ScanResu
 		for _, hint := range packageExtensionHints {
 			matched := ""
 			if strings.HasSuffix(hint.pkg, "/") {
+				// Smallest matching name, so the warning is stable
 				for pkg := range composer.Packages {
-					if strings.HasPrefix(pkg, hint.pkg) {
+					if strings.HasPrefix(pkg, hint.pkg) && (matched == "" || pkg < matched) {
 						matched = pkg
-						break
 					}
 				}
 			} else if composer.HasPackage(hint.pkg) {
