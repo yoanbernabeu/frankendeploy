@@ -1,8 +1,12 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/yoanbernabeu/frankendeploy/internal/ssh"
 )
 
 // joinSetupCommands flattens setup commands for substring assertions.
@@ -113,5 +117,76 @@ func TestValidateSetupEmail(t *testing.T) {
 		if err := validateSetupEmail(invalid); err == nil {
 			t.Errorf("validateSetupEmail(%q) must fail (a typo only surfaces at the Let's Encrypt failure otherwise)", invalid)
 		}
+	}
+}
+
+// fakeReconnectingExecutor simulates a user added to the docker group during
+// setup: docker is refused until a new SSH connection is opened.
+type fakeReconnectingExecutor struct {
+	ssh.MockExecutor
+	reconnects   int
+	usableAfter  int // reconnections needed before docker works
+	reconnectErr error
+}
+
+func (f *fakeReconnectingExecutor) Reconnect() error {
+	if f.reconnectErr != nil {
+		return f.reconnectErr
+	}
+	f.reconnects++
+	return nil
+}
+
+func newFakeDockerHost(usableAfter int) *fakeReconnectingExecutor {
+	f := &fakeReconnectingExecutor{usableAfter: usableAfter}
+	f.ExecFunc = func(ctx context.Context, command string) (*ssh.ExecResult, error) {
+		if f.reconnects >= f.usableAfter {
+			return &ssh.ExecResult{}, nil
+		}
+		return &ssh.ExecResult{ExitCode: 1, Stderr: "permission denied while trying to connect to the docker API"}, nil
+	}
+	return f
+}
+
+func TestEnsureDockerAccess_AlreadyUsable(t *testing.T) {
+	client := newFakeDockerHost(0)
+
+	if err := ensureDockerAccess(context.Background(), client); err != nil {
+		t.Fatalf("ensureDockerAccess() error = %v", err)
+	}
+	if client.reconnects != 0 {
+		t.Errorf("expected no reconnection for root or an existing member, got %d", client.reconnects)
+	}
+}
+
+func TestEnsureDockerAccess_ReconnectsForNewGroup(t *testing.T) {
+	client := newFakeDockerHost(1)
+
+	if err := ensureDockerAccess(context.Background(), client); err != nil {
+		t.Fatalf("ensureDockerAccess() error = %v", err)
+	}
+	if client.reconnects != 1 {
+		t.Errorf("expected one reconnection to pick up the docker group, got %d", client.reconnects)
+	}
+}
+
+func TestEnsureDockerAccess_StillDenied(t *testing.T) {
+	client := newFakeDockerHost(2)
+
+	err := ensureDockerAccess(context.Background(), client)
+	if err == nil {
+		t.Fatal("expected an error when docker stays unusable after reconnecting")
+	}
+	if !strings.Contains(err.Error(), "usermod -aG docker") {
+		t.Errorf("error should say how to fix it, got: %v", err)
+	}
+}
+
+func TestEnsureDockerAccess_ReconnectFails(t *testing.T) {
+	client := newFakeDockerHost(1)
+	client.reconnectErr = errors.New("connection refused")
+
+	if err := ensureDockerAccess(context.Background(), client); err == nil {
+		t.Fatal("expected the reconnection error to be returned")
 	}
 }

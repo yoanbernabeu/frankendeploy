@@ -408,6 +408,9 @@ findtime = 600
 	if err := runSetupCommands(ctx, client, dockerCommands); err != nil {
 		return err
 	}
+	if err := ensureDockerAccess(ctx, client); err != nil {
+		return err
+	}
 
 	// Step 4: Create directory structure and Docker network
 	PrintInfo("[4/5] Configuring FrankenDeploy...")
@@ -418,7 +421,7 @@ findtime = 600
 		{cmd: fmt.Sprintf("sudo mkdir -p %s/logs", constants.CaddyDir)},
 		{cmd: fmt.Sprintf("sudo chown -R $USER:$USER %s", constants.BasePath)},
 		// Create Docker network for apps (exists on re-run)
-		{cmd: fmt.Sprintf("docker network create %s", constants.NetworkName), allowFailure: true},
+		{cmd: fmt.Sprintf("docker network inspect %[1]s >/dev/null 2>&1 || docker network create %[1]s", constants.NetworkName)},
 	}
 	if err := runSetupCommands(ctx, client, structureCommands); err != nil {
 		return err
@@ -520,6 +523,37 @@ findtime = 600
 	fmt.Println("  Run 'frankendeploy deploy " + name + "' from your Symfony project")
 
 	return nil
+}
+
+// reconnectingExecutor is an executor that can open a fresh SSH connection.
+type reconnectingExecutor interface {
+	ssh.Executor
+	Reconnect() error
+}
+
+// ensureDockerAccess makes Docker usable without sudo for the rest of the
+// setup. Group membership is read at login: a non-root user added to the
+// docker group by this very setup only gets it on a new SSH connection.
+func ensureDockerAccess(ctx context.Context, client reconnectingExecutor) error {
+	if dockerUsable(ctx, client) == nil {
+		return nil
+	}
+	if err := client.Reconnect(); err != nil {
+		return fmt.Errorf("failed to reconnect after adding the user to the docker group: %w", err)
+	}
+	if err := dockerUsable(ctx, client); err != nil {
+		return fmt.Errorf("docker is installed but not usable without sudo by this user: %w\n"+
+			"Check that the user is in the docker group: sudo usermod -aG docker $USER", err)
+	}
+	return nil
+}
+
+func dockerUsable(ctx context.Context, client ssh.Executor) error {
+	result, err := client.Exec(ctx, "docker info >/dev/null")
+	if err != nil {
+		return err
+	}
+	return result.Err()
 }
 
 // setupCommand is a remote command with an explicit failure policy. The old
