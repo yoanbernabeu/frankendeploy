@@ -411,6 +411,10 @@ findtime = 600
 	if err := ensureDockerAccess(ctx, client); err != nil {
 		return err
 	}
+	mtu, err := configureDockerMTU(ctx, client)
+	if err != nil {
+		return err
+	}
 
 	// Step 4: Create directory structure and Docker network
 	PrintInfo("[4/5] Configuring FrankenDeploy...")
@@ -420,10 +424,12 @@ findtime = 600
 		{cmd: fmt.Sprintf("sudo mkdir -p %s/apps", constants.CaddyDir)},
 		{cmd: fmt.Sprintf("sudo mkdir -p %s/logs", constants.CaddyDir)},
 		{cmd: fmt.Sprintf("sudo chown -R $USER:$USER %s", constants.BasePath)},
-		// Create Docker network for apps (exists on re-run)
-		{cmd: fmt.Sprintf("docker network inspect %[1]s >/dev/null 2>&1 || docker network create %[1]s", constants.NetworkName)},
 	}
 	if err := runSetupCommands(ctx, client, structureCommands); err != nil {
+		return err
+	}
+	// Create Docker network for apps (exists on re-run)
+	if err := ensureSharedNetwork(ctx, client, mtu); err != nil {
 		return err
 	}
 

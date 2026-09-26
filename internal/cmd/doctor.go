@@ -25,6 +25,7 @@ Local checks:
 Remote checks (over SSH):
 - passwordless sudo (unless root)
 - Docker installed and usable without sudo
+- Docker networks not larger than the server MTU
 - 'frankendeploy' network present
 - Caddy reverse proxy container running
 - free disk space
@@ -89,6 +90,9 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checkCaddyRunning(ctx, client),
 		checkDiskSpace(ctx, client),
 	)
+	if remoteDocker.OK {
+		results = append(results, checkNetworkMTU(ctx, client))
+	}
 
 	// --- Project checks (only inside a project, and only once Docker is
 	// there: on a bare server every docker command fails for the same reason)
