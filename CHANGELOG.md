@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.3] - 2026-09-26
+
+Deploying to a VPS whose network MTU is below 1500 no longer hangs. Found on the same Symfony Demo deployment: the remote build froze for eight minutes on `apt-get update`, then failed with "Unable to locate package", while `doctor` was all green.
+
+### Fixed
+
+- **Servers with a network MTU below 1500**: Docker bridges use 1500, so on a VPS with a smaller interface (1460 on Google Cloud, 1450 on VXLAN clouds, 1400 on some Kubernetes-backed VMs) containers could not download anything: builds hung, Caddy could not reach Let's Encrypt. `server setup` now detects the MTU, writes `/etc/docker/daemon.json` accordingly (never modifying an existing one, whose lines to add are printed instead) and creates the `frankendeploy` network with it, recreating it when an earlier setup left it larger. App networks inherit it. `doctor` gets a Network MTU check that points to `server setup`. Nothing changes on a standard VPS (#112) - @yoanbernabeu
+
 ## [0.16.2] - 2026-09-26
 
 `server setup` now works for a non-root user out of the box, found on the same Symfony Demo deployment as 0.16.1, on a VPS that provides an `ubuntu` user with passwordless sudo.
@@ -256,7 +264,8 @@ This release closes every P0 finding from the production-readiness audit. All fi
 
 Initial public release with core deployment features.
 
-[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.2...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.3...HEAD
+[0.16.3]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.2...v0.16.3
 [0.16.2]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.15.1...v0.16.0
