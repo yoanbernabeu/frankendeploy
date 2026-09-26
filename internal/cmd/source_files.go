@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/yoanbernabeu/frankendeploy/internal/constants"
@@ -150,7 +151,9 @@ func seedSharedDirs(ctx context.Context, client ssh.Executor, imageName, sharedP
 		for i, f := range seeds[d] {
 			quoted[i] = security.ShellEscape(f)
 		}
-		script := fmt.Sprintf(`cd %s && for f in %s; do [ -e "$f" ] && cp -a --parents -- "$f" /seed/; done; true`,
+		// Prints how many files were copied: a committed file may be missing
+		// from the image (excluded by .dockerignore)
+		script := fmt.Sprintf(`cd %s && n=0 && for f in %s; do if [ -e "$f" ]; then cp -a --parents -- "$f" /seed/ && n=$((n+1)); fi; done; echo "$n"`,
 			security.ShellEscape("/app/"+d), strings.Join(quoted, " "))
 		seedCmd := fmt.Sprintf("docker run --rm --user %s --entrypoint sh -v %s:/seed %s -c %s",
 			constants.ContainerUser, security.ShellEscape(target), imageName, security.ShellEscape(script))
@@ -163,7 +166,11 @@ func seedSharedDirs(ctx context.Context, client ssh.Executor, imageName, sharedP
 			PrintWarning("Could not initialize shared %s/ from the image: %v", d, err)
 			continue
 		}
-		PrintInfo("Initialized shared %s/ with %d file(s) committed to Git", d, len(seeds[d]))
+		copied, _ := strconv.Atoi(strings.TrimSpace(result.Stdout))
+		if copied == 0 {
+			continue
+		}
+		PrintInfo("Initialized shared %s/ with %d file(s) committed to Git", d, copied)
 
 		for _, f := range modified {
 			if strings.HasPrefix(f, strings.TrimSuffix(d, "/")+"/") {

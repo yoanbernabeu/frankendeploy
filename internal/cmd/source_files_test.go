@@ -122,6 +122,9 @@ func TestSeedSharedDirs_OnlyEmptyDirs(t *testing.T) {
 		if strings.HasPrefix(command, "test -z") && strings.Contains(command, "uploads") {
 			return &ssh.ExecResult{ExitCode: 1}, nil
 		}
+		if strings.HasPrefix(command, "docker run --rm") {
+			return &ssh.ExecResult{Stdout: "1\n"}, nil
+		}
 		return &ssh.ExecResult{}, nil
 	}
 	seeds := map[string][]string{"data": {"database.sqlite"}, "uploads": {"logo.png"}}
