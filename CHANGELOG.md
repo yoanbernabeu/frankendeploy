@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-09-26
+
+`server setup` now works for a non-root user out of the box, found on the same Symfony Demo deployment as 0.16.1, on a VPS that provides an `ubuntu` user with passwordless sudo.
+
+### Fixed
+
+- **`server setup` as a non-root user**: setup adds the SSH user to the `docker` group, but group membership is read at login, so the connection opened at the start of setup could not use Docker and starting Caddy failed with "permission denied while trying to connect to the docker API". Setup now opens a fresh SSH connection when needed, without any new prompt, and the Docker network creation no longer hides errors. Root was unaffected (#111) - @yoanbernabeu
+
 ## [0.16.1] - 2026-09-26
 
 A false security alert fixed, found while deploying the Symfony Demo on a fresh Ubuntu 24.04 VPS: after testing the connection with `ssh`, as the docs ask, every command refused the server with "host key has changed". The documentation was also reorganized around reading paths.
@@ -248,7 +256,8 @@ This release closes every P0 finding from the production-readiness audit. All fi
 
 Initial public release with core deployment features.
 
-[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.2...HEAD
+[0.16.2]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.15.0...v0.15.1
