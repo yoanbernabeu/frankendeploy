@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -114,13 +115,15 @@ func (s *Scanner) ParseComposer() (*ComposerResult, error) {
 		result.HasSymfony = true
 	}
 
-	// Extract PHP extensions
+	// Extract PHP extensions, sorted: map order is random, and a changing
+	// order would change init's output and the generated Dockerfile
 	for pkg := range composer.Require {
 		if strings.HasPrefix(pkg, "ext-") {
 			extName := strings.TrimPrefix(pkg, "ext-")
 			result.Extensions = append(result.Extensions, extName)
 		}
 	}
+	sort.Strings(result.Extensions)
 
 	return result, nil
 }
