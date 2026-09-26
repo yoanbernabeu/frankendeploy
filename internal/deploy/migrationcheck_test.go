@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -195,5 +196,30 @@ func TestGetMigrationWarningMarkerPath(t *testing.T) {
 
 	if path != expected {
 		t.Errorf("getMigrationWarningMarkerPath() = %s, expected %s", path, expected)
+	}
+}
+
+func TestNewHookError(t *testing.T) {
+	hooks := []string{"php bin/console app:a", "php bin/console d:m:m -n", "php bin/console app:b"}
+	tests := []struct {
+		failed int
+		want   bool
+	}{
+		{0, false},
+		{1, true},
+		{2, true},
+	}
+	for _, tt := range tests {
+		err := NewHookError(hooks, tt.failed, errors.New("exit 1"))
+		if err.MigrationAttempted != tt.want {
+			t.Errorf("failed hook %d: MigrationAttempted = %v, want %v", tt.failed, err.MigrationAttempted, tt.want)
+		}
+		if err.Hook != hooks[tt.failed] || !strings.Contains(err.Error(), hooks[tt.failed]) {
+			t.Errorf("failed hook %d: error must name the hook, got %q", tt.failed, err.Error())
+		}
+	}
+
+	if !migrationMayHaveRun(errors.New("ssh session lost")) {
+		t.Error("an unknown failure must be treated as a possible partial migration")
 	}
 }

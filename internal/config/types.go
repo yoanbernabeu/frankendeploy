@@ -173,12 +173,15 @@ type AppConfig struct {
 
 // ScanResult holds the result of project scanning
 type ScanResult struct {
-	IsSymfony      bool
-	PHPVersion     string
-	PHPExtensions  []string
-	Database       DatabaseConfig
-	Assets         AssetsConfig
-	HasDoctrine    bool
+	IsSymfony     bool
+	PHPVersion    string
+	PHPExtensions []string
+	Database      DatabaseConfig
+	Assets        AssetsConfig
+	HasDoctrine   bool
+	// HasMigrations is true when doctrine/doctrine-migrations-bundle is
+	// installed: without it, doctrine:migrations:* commands do not exist.
+	HasMigrations  bool
 	HasMessenger   bool
 	HasMailer      bool
 	HasAPIPlatform bool

@@ -650,3 +650,45 @@ func TestIsSymfonyProject_RequiresFrameworkBundle(t *testing.T) {
 		t.Error("a project without symfony/framework-bundle must not be detected as Symfony")
 	}
 }
+
+// scanDoctrineProject scans a Symfony project with Doctrine configured and
+// the given extra packages, and returns the generated pre-deploy hooks.
+func scanDoctrineProject(t *testing.T, extraPackages string) []string {
+	t.Helper()
+	dir := t.TempDir()
+	composer := `{"require": {"php": ">=8.4", "symfony/framework-bundle": "^7.4", "doctrine/orm": "^3.3"` + extraPackages + `}}`
+	if err := os.WriteFile(filepath.Join(dir, "composer.json"), []byte(composer), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "config", "packages"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config", "packages", "doctrine.yaml"), []byte("doctrine:\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := New(dir)
+	result, err := s.Scan()
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+	return s.ToProjectConfig(result, "app").Deploy.Hooks.PreDeploy
+}
+
+func TestScanner_MigrationHookWithMigrationsBundle(t *testing.T) {
+	hooks := scanDoctrineProject(t, `, "doctrine/doctrine-migrations-bundle": "^3.4"`)
+
+	if len(hooks) != 1 || !strings.Contains(hooks[0], "doctrine:migrations:migrate") {
+		t.Errorf("expected the migration hook, got %v", hooks)
+	}
+}
+
+// The Symfony Demo uses the ORM without the migrations bundle: the command
+// does not exist and the hook would make every deploy fail.
+func TestScanner_NoMigrationHookWithoutMigrationsBundle(t *testing.T) {
+	hooks := scanDoctrineProject(t, "")
+
+	if len(hooks) != 0 {
+		t.Errorf("expected no pre-deploy hook without doctrine-migrations-bundle, got %v", hooks)
+	}
+}

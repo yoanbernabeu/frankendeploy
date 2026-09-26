@@ -139,7 +139,7 @@ func RunPipeline(state *DeployState, steps Steps, opts Options) error {
 			if !opts.Force {
 				log.Warning("Pre-deploy hooks failed, rolling back...")
 				steps.RollbackNewContainer(state)
-				if opts.HasMigrationHook {
+				if opts.HasMigrationHook && migrationMayHaveRun(err) {
 					steps.WarnMigrationRollback("The migration may have been partially applied (non-transactional DDL on MySQL/MariaDB leaves a partial schema).", dbBackupPath)
 				}
 				return fmt.Errorf("pre-deploy hooks failed: %w", err)

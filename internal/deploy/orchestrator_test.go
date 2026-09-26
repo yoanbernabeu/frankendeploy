@@ -289,3 +289,34 @@ func TestRunPipeline_NoHooksSkipsBackupAndHooks(t *testing.T) {
 		}
 	}
 }
+
+func TestRunPipeline_PreHookFailureBeforeMigrationNoWarning(t *testing.T) {
+	hooks := []string{"php bin/console app:check", "php bin/console doctrine:migrations:migrate -n"}
+	r := &stepRecorder{}
+	steps := makeSteps(r)
+	steps.RunPreDeployHooks = func() error { return NewHookError(hooks, 0, errors.New("exit 1")) }
+
+	if err := RunPipeline(NewDeployState("myapp"), steps, fullOptions()); err == nil {
+		t.Fatal("expected error")
+	}
+	if !r.rolledBack {
+		t.Error("expected rollback")
+	}
+	if len(r.warnedMig) != 0 {
+		t.Errorf("no migration ran: no partial-migration warning expected, got %v", r.warnedMig)
+	}
+}
+
+func TestRunPipeline_PreHookFailureAfterMigrationWarns(t *testing.T) {
+	hooks := []string{"php bin/console doctrine:migrations:migrate -n", "php bin/console app:check"}
+	r := &stepRecorder{}
+	steps := makeSteps(r)
+	steps.RunPreDeployHooks = func() error { return NewHookError(hooks, 1, errors.New("exit 1")) }
+
+	if err := RunPipeline(NewDeployState("myapp"), steps, fullOptions()); err == nil {
+		t.Fatal("expected error")
+	}
+	if len(r.warnedMig) == 0 || !strings.Contains(r.warnedMig[0], "partially applied") {
+		t.Errorf("the migration ran before the failing hook: warning expected, got %v", r.warnedMig)
+	}
+}
