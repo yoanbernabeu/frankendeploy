@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-29
+
+MongoDB joins as a service, in its own `mongodb:` section next to `database:`. Doctrine MongoDB ODM or the `mongodb` library is detected by `init`, runs locally as a single-node replica set, and connects in production either to an external cluster such as Atlas or to a container FrankenDeploy provisions.
+
+### Added
+
+- **MongoDB service**: `init` sets `mongodb.enabled` when it detects `doctrine/mongodb-odm`, `doctrine/mongodb-odm-bundle`, `mongodb/mongodb`, `mongodb/laravel-mongodb`, `ext-mongodb` or a `MONGODB_URI`, and adds the `mongodb` PHP extension. The dev `compose.yaml` runs a `mongodb` service as a single-node replica set (`rs0`), so transactions work. In production, `managed: false` (the default) expects an external `MONGODB_URI` such as Atlas, checked before the deploy; `managed: true` provisions a per-app `<app>-mongodb` container as a single-node replica set and injects `MONGODB_URI` into the app and the Messenger worker, across deploy, rollback and `env reload`. `doctor` and `app remove` know about the container. No migrations or pre-migration dumps, and a single node provides no data redundancy (#109) - @GromNaN
+
 ## [0.16.4] - 2026-09-26
 
 The Symfony Demo now deploys end to end with the commands from the docs, blog and database included. Two bugs blocked it: a migration hook generated for an app without the migrations bundle, and a SQLite database hidden by its shared directory while the deploy reported success. The source transfer also stops sending files ignored by Git to the server.
@@ -278,7 +286,8 @@ This release closes every P0 finding from the production-readiness audit. All fi
 
 Initial public release with core deployment features.
 
-[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.4...HEAD
+[Unreleased]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.4...v0.17.0
 [0.16.4]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.3...v0.16.4
 [0.16.3]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.2...v0.16.3
 [0.16.2]: https://github.com/yoanbernabeu/frankendeploy/compare/v0.16.1...v0.16.2
