@@ -202,6 +202,18 @@ func TestFormatEnvCheckError(t *testing.T) {
 	}
 }
 
+func TestFormatEnvCheckError_MongoDBURL(t *testing.T) {
+	missing := []EnvRequirement{
+		{Name: "MONGODB_URI", Description: "MongoDB connection URL"},
+	}
+
+	result := FormatEnvCheckError(missing, "prod")
+
+	if !strings.Contains(result, "frankendeploy env set prod MONGODB_URI=") {
+		t.Errorf("FormatEnvCheckError() should suggest setting MONGODB_URI, got:\n%s", result)
+	}
+}
+
 func TestParseEnvContent(t *testing.T) {
 	tests := []struct {
 		name     string

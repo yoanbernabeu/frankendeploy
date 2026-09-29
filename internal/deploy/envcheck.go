@@ -76,6 +76,20 @@ func CheckEnvVars(ctx context.Context, client ssh.Executor, cfg *config.ProjectC
 		}
 	}
 
+	// MongoDB enabled but not managed: an external MONGODB_URI is required
+	// (e.g. Atlas), as FrankenDeploy does not provision the container.
+	if cfg.MongoDB.Enabled && !cfg.MongoDB.Managed {
+		if value, exists := existingVars["MONGODB_URI"]; exists && value != "" {
+			result.Present = append(result.Present, "MONGODB_URI")
+		} else {
+			result.Missing = append(result.Missing, EnvRequirement{
+				Name:        "MONGODB_URI",
+				Description: "MongoDB connection URL (required - mongodb is not managed)",
+				CanGenerate: false,
+			})
+		}
+	}
+
 	return result, nil
 }
 
@@ -167,6 +181,8 @@ func FormatEnvCheckError(missing []EnvRequirement, serverName string) string {
 			sb.WriteString(fmt.Sprintf("   frankendeploy env set %s APP_SECRET=$(openssl rand -hex 32)\n", serverName))
 		case "DATABASE_URL":
 			sb.WriteString(fmt.Sprintf("   frankendeploy env set %s DATABASE_URL=\"postgresql://user:pass@host:5432/db\"\n", serverName))
+		case "MONGODB_URI":
+			sb.WriteString(fmt.Sprintf("   frankendeploy env set %s MONGODB_URI=\"mongodb+srv://user:pass@cluster0.mongodb.net/db\"\n", serverName))
 		default:
 			sb.WriteString(fmt.Sprintf("   frankendeploy env set %s %s=\"<value>\"\n", serverName, req.Name))
 		}

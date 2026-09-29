@@ -67,6 +67,7 @@ func (s *Scanner) Scan() (*config.ScanResult, error) {
 	result.HasMigrations = composer.HasPackage("doctrine/doctrine-migrations-bundle")
 	result.HasMessenger = s.HasMessenger()
 	result.HasMailer = s.HasMailer()
+	result.HasMongoDB = s.HasMongoDB()
 	result.HasScheduler = composer.HasPackage("symfony/scheduler")
 
 	// Resolve the real Messenger transports instead of guessing "async":
@@ -154,6 +155,25 @@ func (s *Scanner) HasMailer() bool {
 	return false
 }
 
+// HasMongoDB checks if the project uses MongoDB (a MONGODB_URI in the
+// environment, or Doctrine MongoDB ODM / the mongodb library in composer).
+// This is independent from the database detection.
+func (s *Scanner) HasMongoDB() bool {
+	if env, err := s.GetMergedEnv(); err == nil {
+		if _, ok := env["MONGODB_URI"]; ok {
+			return true
+		}
+	}
+	composer, err := s.ParseComposer()
+	if err != nil {
+		return false
+	}
+	return composer.HasAnyPackage(
+		"doctrine/mongodb-odm", "doctrine/mongodb-odm-bundle",
+		"mongodb/mongodb", "mongodb/laravel-mongodb",
+	) || composer.HasPackage("ext-mongodb") || s.hasExtInPlatform("mongodb")
+}
+
 // packageExtensionHints maps composer packages (exact name or prefix ending
 // with "/") to the PHP extensions they need at runtime. Every inference is
 // announced through a scanner warning: correct or announced, never silent.
@@ -226,6 +246,15 @@ func (s *Scanner) enhanceExtensions(extensions []string, result *config.ScanResu
 		if !extMap["pdo_sqlite"] {
 			extensions = append(extensions, "pdo_sqlite")
 		}
+	}
+
+	// MongoDB (Doctrine MongoDB ODM / the mongodb library): the app always
+	// needs the ext-mongodb extension to connect, whether to the local dev
+	// container or an external MONGODB_URI.
+	if result.HasMongoDB && !extMap["mongodb"] {
+		extensions = append(extensions, "mongodb")
+		extMap["mongodb"] = true
+		result.Warnings = append(result.Warnings, "adding PHP extension mongodb (Doctrine MongoDB ODM / mongodb detected)")
 	}
 
 	// AMQP only when an amqp transport is actually configured — installing
@@ -314,6 +343,13 @@ func (s *Scanner) ToProjectConfig(result *config.ScanResult, name string) *confi
 	// Auto-fill Mailer config if detected
 	if result.HasMailer {
 		cfg.Mailer = config.MailerConfig{Enabled: true}
+	}
+
+	// Auto-fill MongoDB service config if detected. Managed stays false by
+	// default: the app connects to an external MONGODB_URI (e.g. Atlas) unless
+	// the user opts into a locally provisioned container with managed: true.
+	if result.HasMongoDB {
+		cfg.MongoDB = config.MongoConfig{Enabled: true}
 	}
 
 	// Auto-fill hooks based on detected features

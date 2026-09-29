@@ -42,6 +42,7 @@ type ComposeData struct {
 	Env           config.EnvConfig
 	HasMailer     bool
 	HasMessenger  bool
+	HasMongoDB    bool
 	DevDBUser     string
 	DevDBPassword string
 	DevDBName     string
@@ -92,6 +93,7 @@ func (g *ComposeGenerator) buildComposeData(ctx composeContext) (ComposeData, er
 		data.DevDBName = DefaultDevDBName
 		data.HasMailer = g.config.Mailer.Enabled
 		data.HasMessenger = g.config.Messenger.Enabled
+		data.HasMongoDB = g.config.MongoDB.Enabled
 
 		if g.config.Database.Driver != "" {
 			dbURL, err := g.buildDatabaseURL()

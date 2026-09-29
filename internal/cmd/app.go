@@ -166,6 +166,10 @@ func runAppRemove(cmd *cobra.Command, args []string) error {
 	PrintVerbose("Stopping database container...")
 	stopAndRemoveContainer(ctx, conn.Client, fmt.Sprintf("%s-db", appName))
 
+	// Stop and remove the managed mongodb container if exists
+	PrintVerbose("Stopping mongodb container...")
+	stopAndRemoveContainer(ctx, conn.Client, fmt.Sprintf("%s-mongodb", appName))
+
 	// Remove volumes unless --keep-data is specified
 	if !appRemoveKeepData {
 		PrintVerbose("Removing data volumes...")

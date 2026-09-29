@@ -52,10 +52,18 @@ services:
       options:
         max-size: "{{ logMaxSize }}"
         max-file: "{{ logMaxFile }}"
-{{- if or (eq .Database.Driver "pgsql") (eq .Database.Driver "mysql") (eq .Database.Driver "mariadb") }}
+{{- if or (eq .Database.Driver "pgsql") (eq .Database.Driver "mysql") (eq .Database.Driver "mariadb") .HasMongoDB }}
     depends_on:
+{{- if or (eq .Database.Driver "pgsql") (eq .Database.Driver "mysql") (eq .Database.Driver "mariadb") }}
       database:
         condition: service_healthy
+{{- end }}
+{{- if .HasMongoDB }}
+      mongodb:
+        condition: service_healthy
+      mongodb-init:
+        condition: service_completed_successfully
+{{- end }}
 {{- end }}
 
 {{- if eq .Database.Driver "pgsql" }}
@@ -142,10 +150,56 @@ services:
       RABBITMQ_DEFAULT_PASS: {{ .DevDBPassword }}
 {{- end }}
 
+{{- if .HasMongoDB }}
+
+  mongodb:
+    image: mongodb/mongodb-community-server:8.0
+    # Single-node replica set (rs0): enables transactions for Doctrine MongoDB ODM
+    command: ["--replSet", "rs0"]
+    ports:
+      - "127.0.0.1:27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: {{ .DevDBUser }}
+      MONGO_INITDB_ROOT_PASSWORD: {{ .DevDBPassword }}
+      MONGO_INITDB_DATABASE: {{ .DevDBName }}
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh -u {{ .DevDBUser }} -p {{ .DevDBPassword }} --authenticationDatabase admin --quiet --eval 'db.adminCommand({ping:1}).ok' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  mongodb-init:
+    # One-shot: turn the single mongodb node into a replica set and wait for
+    # PRIMARY. Idempotent: exits immediately when the set is already PRIMARY
+    # (rs.initiate() would throw AlreadyInitialized on an existing rs0 config),
+    # otherwise initiates then waits.
+    image: mongodb/mongodb-community-server:8.0
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        for i in $(seq 1 30); do
+          if mongosh --host mongodb -u {{ .DevDBUser }} -p {{ .DevDBPassword }} --authenticationDatabase admin --quiet --eval 'rs.status().members[0].stateStr' 2>/dev/null | grep -q PRIMARY; then
+            exit 0
+          fi
+          mongosh --host mongodb -u {{ .DevDBUser }} -p {{ .DevDBPassword }} --authenticationDatabase admin --quiet --eval 'rs.initiate({_id:"rs0", members:[{_id:0, host:"mongodb:27017"}]})' >/dev/null 2>&1
+          sleep 1
+        done
+        exit 1
+{{- end }}
+
 volumes:
   vendor:
   caddy_data:
   caddy_config:
 {{- if or (eq .Database.Driver "pgsql") (eq .Database.Driver "mysql") }}
   db_data:
+{{- end }}
+{{- if .HasMongoDB }}
+  mongodb_data:
 {{- end }}

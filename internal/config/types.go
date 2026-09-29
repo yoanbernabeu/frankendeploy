@@ -10,6 +10,7 @@ type ProjectConfig struct {
 	Assets            AssetsConfig     `yaml:"assets,omitempty"`
 	Messenger         MessengerConfig  `yaml:"messenger,omitempty"`
 	Mailer            MailerConfig     `yaml:"mailer,omitempty"`
+	MongoDB           MongoConfig      `yaml:"mongodb,omitempty"`
 	Dockerfile        DockerfileConfig `yaml:"dockerfile,omitempty"`
 	Deploy            DeployConfig     `yaml:"deploy,omitempty"`
 	Env               EnvConfig        `yaml:"env,omitempty"`
@@ -78,6 +79,18 @@ type MessengerConfig struct {
 // MailerConfig holds Symfony Mailer configuration
 type MailerConfig struct {
 	Enabled bool `yaml:"enabled,omitempty"`
+}
+
+// MongoConfig holds the MongoDB configuration, separate from the database.
+// FrankenDeploy provides a local mongodb container in development and, when
+// managed, a single-node replica set in production. It is not a managed
+// database: no migrations, backups or migration dumps.
+type MongoConfig struct {
+	Enabled bool `yaml:"enabled,omitempty"`
+	// Managed: when true, FrankenDeploy provisions a local mongodb container
+	// in production and injects MONGODB_URI into the app. When false, the
+	// project provides an external MONGODB_URI (e.g. Atlas) in the environment.
+	Managed bool `yaml:"managed,omitempty"`
 }
 
 // DockerfileConfig holds Dockerfile customization options
@@ -184,6 +197,7 @@ type ScanResult struct {
 	HasMigrations  bool
 	HasMessenger   bool
 	HasMailer      bool
+	HasMongoDB     bool
 	HasAPIPlatform bool
 	// HasFrankenPHPRuntime is true when the app can boot in FrankenPHP
 	// worker mode: symfony/runtime >= 7.4 or runtime/frankenphp-symfony.

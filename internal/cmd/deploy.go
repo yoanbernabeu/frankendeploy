@@ -182,6 +182,16 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		PrintSuccess("Database ready: %s", projectCfg.Database.Driver)
 	}
 
+	// Step 3c: Deploy the managed mongodb service if configured (a separate
+	// section from database.*, provisioned when mongodb.managed is true)
+	if projectCfg.MongoDB.Enabled && projectCfg.MongoDB.Managed {
+		PrintInfo("Setting up managed mongodb...")
+		if _, err := deploy.DeployMongoDBService(ctx, client, projectCfg, remoteAppPath, cmdLogger{}); err != nil {
+			return fmt.Errorf("mongodb setup failed: %w", err)
+		}
+		PrintSuccess("MongoDB ready")
+	}
+
 	// Blue-green deployment: start new container with temp name, health check, then swap
 	state := deploy.NewDeployState(projectCfg.Name)
 	sharedSeeds, modifiedShared := seedableSharedFiles(ctx, ".", projectCfg.Deploy.EffectiveSharedDirs())
@@ -574,7 +584,12 @@ func startNewContainer(ctx context.Context, client ssh.Executor, cfg *config.Pro
 	// Remove any leftover temp container from a previous failed deploy
 	forceRemoveContainer(ctx, client, containerName)
 
-	dockerRunCmd := buildAppRunCommand(cfg, imageName, appPath, databaseURL, containerName, trustedProxiesEnv(ctx, client, cfg.Name)...)
+	extraEnv := trustedProxiesEnv(ctx, client, cfg.Name)
+	if mongoVar := deploy.ManagedMongoEnvVar(ctx, client, cfg, appPath); mongoVar != "" {
+		extraEnv = append(extraEnv, mongoVar)
+	}
+
+	dockerRunCmd := buildAppRunCommand(cfg, imageName, appPath, databaseURL, containerName, extraEnv...)
 
 	PrintVerboseCommand(dockerRunCmd)
 	result, err := client.Exec(ctx, dockerRunCmd)
@@ -957,6 +972,9 @@ func deployMessengerWorkers(ctx context.Context, client ssh.Executor, cfg *confi
 	envVars := "-e APP_ENV=prod -e APP_DEBUG=0"
 	if databaseURL != "" {
 		envVars += fmt.Sprintf(" -e DATABASE_URL=%s", security.ShellEscape(databaseURL))
+	}
+	if mongoVar := deploy.ManagedMongoEnvVar(ctx, client, cfg, appPath); mongoVar != "" {
+		envVars += " -e " + mongoVar
 	}
 
 	// Stop existing workers

@@ -292,7 +292,7 @@ func checkAppNetwork(ctx context.Context, client ssh.Executor, appName string) d
 	}
 
 	var leftovers []string
-	for _, container := range []string{appName, appName + "-worker", appName + "-db"} {
+	for _, container := range []string{appName, appName + "-worker", appName + "-db", appName + "-mongodb"} {
 		if _, onShared, exists := attached(container); exists && onShared {
 			leftovers = append(leftovers, container)
 		}

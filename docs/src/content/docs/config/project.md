@@ -82,6 +82,14 @@ messenger:
 mailer:
   enabled: false
 
+# MongoDB (optional), separate from the database section
+mongodb:
+  # Adds a local mongodb container in dev, and the mongodb PHP extension
+  enabled: false
+  # managed: true provisions a single-node replica set in production and
+  # injects MONGODB_URI. false expects an external MONGODB_URI (e.g. Atlas)
+  managed: false
+
 # Dockerfile customization (optional)
 dockerfile:
   # Additional APT packages
@@ -193,7 +201,7 @@ When enabled, `build` generates a `Caddyfile` at the project root that is baked 
 
 Installed with `install-php-extensions` in the base image, so they are present in **both** dev and prod. `init` always adds `intl`, `opcache` and `zip`, the PDO driver of your database, `amqp` or `redis` when a Messenger transport uses them, and `pcntl` with Messenger (graceful worker shutdown).
 
-Common extensions: `pdo_pgsql`, `pdo_mysql`, `pdo_sqlite`, `intl`, `opcache`, `redis`, `amqp`, `gd`, `imagick`, `xdebug`. Xdebug is installed but disabled by default (`XDEBUG_MODE=off`); see [Local Development](/frankendeploy/guides/local-development/#debugging-with-xdebug) to enable it.
+Common extensions: `pdo_pgsql`, `pdo_mysql`, `pdo_sqlite`, `mongodb`, `intl`, `opcache`, `redis`, `amqp`, `gd`, `imagick`, `xdebug`. Xdebug is installed but disabled by default (`XDEBUG_MODE=off`); see [Local Development](/frankendeploy/guides/local-development/#debugging-with-xdebug) to enable it. The `mongodb` extension is added when the [MongoDB service](#mongodb) is enabled.
 
 ### `database.driver`
 
@@ -242,6 +250,21 @@ When enabled, each deploy (and rollback) starts one `<name>-worker` container ru
 ### `mailer.enabled`
 
 Set by `init` when `config/packages/mailer.yaml` exists. Adds a [Mailpit](https://mailpit.axllent.org/) service to the local dev environment (SMTP on `mailpit:1025`, web UI on http://localhost:8025). No effect in production.
+
+### `mongodb`
+
+```yaml
+mongodb:
+  enabled: true
+  managed: false
+```
+
+MongoDB (Doctrine MongoDB ODM or the `mongodb` library) is configured in its own section, separate from `database`: no migrations, no pre-migration dumps. `init` sets `enabled: true` when it detects `doctrine/mongodb-odm`, `doctrine/mongodb-odm-bundle`, `mongodb/mongodb`, `mongodb/laravel-mongodb` or `ext-mongodb`, and adds the `mongodb` PHP extension.
+
+- `managed: true`: FrankenDeploy provisions a `mongodb/mongodb-community-server` container as a **single-node replica set** (rs0), which enables transactions; a single node provides no data redundancy. It injects `MONGODB_URI` into the app and the Messenger worker.
+- `managed: false` (default): you provide an external `MONGODB_URI`, for example an Atlas cluster (a real replica set), with `frankendeploy env set`.
+
+In dev, `compose.yaml` also runs a `mongodb` service as a **single-node replica set** (an `rs0` replica set initiated once), on port 27017. Point your dev `MONGODB_URI` at `mongodb:27017` with the `replicaSet=rs0` parameter, e.g. `mongodb://app:app@mongodb:27017/app?authSource=admin&replicaSet=rs0`.
 
 ### `dockerfile`
 
